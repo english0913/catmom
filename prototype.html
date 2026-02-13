@@ -263,7 +263,7 @@
       useDrain: 0.06,
       dirtyDrain: 0.015,      // 시간이 지나며 약간씩 더러워짐(모래 감소)
       dirtyTickPerSec: 0.0015,
-      boxRadius: 120,         // (참고용) 거리조건은 사용 안 함(버그수습)
+      useRange: 120,          // 이 범위 내 화장실만 사용 가능(원격 배설 방지)
       needIntervalMs: [16000, 26000],
       peeChance: 0.62,        // 배설 이벤트에서 pee vs poop
       accidentBaseChance: 0.10,      // 화장실 있어도 실수할 확률 (아주 낮게)
@@ -1032,10 +1032,16 @@
       return;
     }
 
-    // very stressed cats calm down first
+    // very stressed cats: stress-down behavior first
     if(stress > 0.90){
-      startAction(c, Actions.REST, t);
-      c.ai.nextDecision = t + CONFIG.decisionEvery[0] + Math.random()*CONFIG.decisionEvery[1];
+      if(energy < 0.35){
+        startAction(c, Actions.SLEEP, t);
+      } else if(fun < 0.85){
+        startAction(c, Actions.PLAY, t);
+      } else {
+        startAction(c, Actions.HIDE, t, true);
+      }
+      c.ai.nextDecision = t + 900 + Math.random()*700;
       return;
     }
 
@@ -1073,10 +1079,17 @@
       }
     }
 
-    // PATCH21: fun 임계 올림(놀이 빈도↑)
+    // stress가 높으면 놀이/수면 우선으로 완화 유도
+    if(stress > 0.75 && energy > 0.28){
+      startAction(c, Actions.PLAY, t);
+      c.ai.nextDecision = t + 1100 + Math.random()*800;
+      return;
+    }
+
+    // PATCH21+: fun 임계 추가 상향(놀이 빈도↑)
     if (satiety < 0.28 && t > (c.ai.eatCdUntil||0)) startAction(c, Actions.EAT, t);
     else if (energy < 0.25) startAction(c, Actions.SLEEP, t);
-    else if (fun < 0.55) startAction(c, Actions.PLAY, t); // (was 0.40)
+    else if (fun < 0.70) startAction(c, Actions.PLAY, t);
     else startAction(c, Math.random()<0.62 ? Actions.REST : Actions.WANDER, t);
 
     c.ai.nextDecision = t + CONFIG.decisionEvery[0] + Math.random()*CONFIG.decisionEvery[1];
@@ -1276,14 +1289,21 @@
   }
 
   // ===== Litter need (PATCH21) =====
-  function pickBestLitterBox(){
+  function pickBestLitterBoxForCat(c){
     const boxes = getItemsByType(ItemType.LITTER_BOX);
     if(!boxes.length) return null;
-    // choose max sand
-    let best = boxes[0], bestS = (best.sand ?? 0);
-    for(const b of boxes){
-      const s = (b.sand ?? 0);
-      if(s > bestS){ bestS = s; best = b; }
+
+    // 범위 내 화장실만 후보로 사용 (원격 배설 방지)
+    const inRange = boxes.filter(b => d2(c.pos.x,c.pos.y,b.x,b.y) <= CONFIG.litter.useRange*CONFIG.litter.useRange);
+    if(!inRange.length) return null;
+
+    // 모래량 우선 + 거리 가중치
+    let best = inRange[0], bestS = -1e9;
+    for(const b of inRange){
+      const sand = (b.sand ?? 0);
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,b.x,b.y));
+      const score = sand*2.0 - dist/220;
+      if(score > bestS){ bestS = score; best = b; }
     }
     return best;
   }
@@ -1294,11 +1314,11 @@
     // schedule next need first (avoid reentry spam)
     c.status.nextLitterNeedAt = t + rand(CONFIG.litter.needIntervalMs[0], CONFIG.litter.needIntervalMs[1]);
 
-    const box = pickBestLitterBox();
+    const box = pickBestLitterBoxForCat(c);
     const hasBox = !!box;
     const sand01 = hasBox ? (box.sand ?? 0) : 0;
 
-    // PATCH21: 화장실 "거리조건" 제거(버그수습). 있으면 거기 사용 처리.
+    // 범위 내 화장실 + 최소 모래량 필요
     const boxOk = hasBox && sand01 > 0.08;
 
     const lowSand = hasBox && sand01 <= 0.12;
@@ -1308,16 +1328,13 @@
     const isPee = Math.random() < CONFIG.litter.peeChance;
 
     if(boxOk && !isAccident){
-      // Use litter box: spawn waste at box position (cleaner behavior)
+      // 화장실 내 자동 분해: 오브젝트를 남기지 않음(부정 효과 없음)
       box.sand = clamp01((box.sand ?? 0) - CONFIG.litter.useDrain);
-
-      const wType = isPee ? ItemType.PEE : ItemType.POOP;
-      items.push(createItem(wType, box.x + (Math.random()-0.5)*16, box.y + (Math.random()-0.5)*16));
       c.ai.floatIcon = Sub.LITTER; c.ai.floatUntil = t + 650;
-      addLog(`${c.name} 🧻 : 화장실 사용 (${isPee ? "💦" : "💩"})`);
+      addLog(`${c.name} 🧻 : 화장실 사용 (${isPee ? "💦" : "💩"}, 자동 분해)`);
 
-      // small relief
-      c.needs.stress = clamp01(c.needs.stress - 0.03);
+      // 화장실 사용은 안도감 제공
+      c.needs.stress = clamp01(c.needs.stress - 0.05);
       return;
     }
 
@@ -1455,6 +1472,11 @@
         if(c.ai.targetType === "HUMAN") down = CONFIG.sleep.humanBonusStressDown*dt;
         c.needs.stress = clamp01(c.needs.stress - down);
       }
+    }
+
+    if(c.ai.action === Actions.REST){
+      c.needs.stress = clamp01(c.needs.stress - 0.020*dt);
+      c.needs.fun = clamp01(c.needs.fun + 0.004*dt);
     }
 
     if(c.ai.action === Actions.PLAY){
