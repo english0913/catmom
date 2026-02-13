@@ -1,0 +1,2654 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>Cat Sim Prototype - Patch21 (Bowl Empty Fix + Fun/Stress Tune + Litter/Poop + Corpse Cleanup + Debris)</title>
+  <style>
+    html, body { margin:0; height:100%; font-family: system-ui, sans-serif; background:#0e1116; color:#e6edf3; overflow:hidden; }
+    #wrap { display:flex; height:100%; }
+    #left { flex: 1; position:relative; }
+    #ui { width: 580px; background:#121826; padding:15px; border-left:1px solid #223; overflow-y:auto; box-sizing:border-box; }
+    .card { background:#0f1626; border:1px solid #1f2a44; border-radius:12px; padding:12px; margin-bottom:12px; }
+    .title { font-weight:700; font-size:14px; margin-bottom:10px; color:#7aa2ff; border-bottom:1px solid #1f2a44; padding-bottom:6px; display:flex; justify-content:space-between; align-items:center; gap:10px;}
+    .hint { color:#9fb1d1; font-size:12px; line-height:1.55; }
+    .row { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+    button { background:#1f2a44; color:#e6edf3; border:1px solid #2b3a60; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:12px; }
+    button:hover { background:#2b3a60; }
+    button.on { background:#2b3a60; border-color:#7aa2ff; }
+    button.danger { background:#3a1f2a; border-color:#603a45; }
+    button.danger:hover { background:#603a45; }
+    canvas { width:100%; height:100%; display:block; }
+    .bar { height:6px; background:#24324e; border-radius:3px; overflow:hidden; margin:4px 0 8px; }
+    .fill { height:100%; background:#7aa2ff; transition: width 0.25s; }
+    .mono { font-family: ui-monospace, monospace; font-size:11px; }
+    .tag { font-size:10px; padding:2px 6px; border-radius:999px; border:1px solid #2b3a60; color:#cfe1ff; opacity:0.95; white-space:nowrap; }
+    .split { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .logbox { height:150px; overflow:hidden; opacity:0.88; }
+    .negbox { height:170px; overflow:hidden; opacity:0.95; }
+    .negTop { background:#120b12; border:1px solid #3a1f2a; padding:8px; border-radius:10px; margin-bottom:8px; }
+    .k { opacity:0.8; }
+    .rangeRow { display:flex; align-items:center; gap:10px; }
+    input[type="range"]{ width: 220px; }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <div id="left"><canvas id="c"></canvas></div>
+
+  <div id="ui">
+    <div class="row">
+      <button id="modeObserve" class="on">관찰 모드</button>
+      <button id="modeItem">아이템 모드</button>
+      <button id="treat">간식 투척 🍪</button>
+      <button id="feed">사료 사용 🥫</button>
+      <button id="sand">모래 사용 🪣</button>
+      <button id="clean">청소 모드 🧽</button>
+      <button id="addCat">+ 고양이 추가</button>
+      <button id="removeCat">- 고양이 삭제</button>
+      <button id="reset" class="danger">초기화</button>
+    </div>
+
+    <div class="card">
+      <div class="title">
+        <span>Patch21: 빈그릇버그/놀이/스트레스/화장실/시체청소/잔해</span>
+        <span class="tag" id="modeTag">MODE: 관찰</span>
+      </div>
+      <div class="hint">
+        • (Fix) <b>빈그릇인데 EAT 시도</b> 버그 수정(빈그릇이면 chooseBowl null)<br/>
+        • (Tune) fun 상승/빈도↑, stress 상승↓, 상태이상 과발동↓<br/>
+        • (Litter) <b>화장실(LITTER)</b> + <b>💩</b> 추가. 모래가 부족하면 💦/💩 실수 확률↑<br/>
+        • (Corpse) 탈진 시 <b>시체(☠️)</b> 오브젝트로 전환(영향 X) → 청소모드로 제거하면 해당 고양이도 완전 삭제<br/>
+        • (Debris) 파괴적 스크래칭 시 <b>잔해(🧩)</b> 생성(스트레스 오라)<br/>
+        • 디버그: 게임 속도 슬라이더 (0.25x~4x)
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">
+        <span>디버그</span>
+        <span class="tag" id="speedTag">x1.0</span>
+      </div>
+      <div class="rangeRow">
+        <div class="hint" style="min-width:70px;">게임 속도</div>
+        <input id="speed" type="range" min="0.25" max="4" step="0.05" value="1" />
+        <div class="hint mono" id="speedVal">1.00</div>
+      </div>
+      <div class="hint">• dt 캡 적용 (폭주 방지)</div>
+    </div>
+
+    <div class="card" id="itemPanel">
+      <div class="title">
+        <span>아이템 패널</span>
+        <span class="tag" id="placeTag">선택: 없음</span>
+      </div>
+
+      <div class="row" style="margin-bottom:8px;">
+        <button class="itemBtn" data-item="BOWL">+ 밥그릇 🍽️</button>
+        <button class="itemBtn" data-item="LITTER_BOX">+ 화장실 🧻</button>
+        <button class="itemBtn" data-item="BED_MAIN">+ 침대 💤</button>
+        <button class="itemBtn" data-item="HUMAN_SPOT">+ 사람옆 🧍</button>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <button class="itemBtn" data-item="TOY_BALL">+ 공 ⚽</button>
+        <button class="itemBtn" data-item="TOY_WAND">+ 낚시대 🎣</button>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <button id="deleteItem" class="danger" disabled>선택 아이템 삭제</button>
+        <button id="clearItemSel" disabled>선택 해제</button>
+      </div>
+
+      <div class="hint">
+        • 아이템 모드에서만 배치/이동/삭제 가능<br/>
+        • 🥫 사료 사용: 밥그릇 클릭 → 가득 채움<br/>
+        • 🪣 모래 사용: 화장실 클릭 → 모래 보충<br/>
+        • 🧽 청소 모드: 🤮/💦/💩/🧩/☠️ 클릭 → 제거
+      </div>
+    </div>
+
+    <div id="sel-info" class="card">
+      <div class="hint">관찰 모드에서 고양이를 선택하면 상태가 표시됩니다.</div>
+    </div>
+
+    <div class="card">
+      <div class="title">로그</div>
+      <div class="split">
+        <div>
+          <div class="hint k">Activities (INFO/EVENT)</div>
+          <div id="log" class="mono logbox"></div>
+        </div>
+        <div>
+          <div class="hint k">NEG Events</div>
+          <div id="negTop" class="mono negTop"></div>
+          <div id="neg" class="mono negbox"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ================= CONFIG =================
+  const CONFIG = {
+    maxCatsGoal: 20,
+    dtCap: 0.10,
+
+    // movement
+    move: { baseSpeed: 45, avoidRadius: 60, fearRadius: 120 },
+
+    // needs (PATCH21 tune)
+    needs: {
+      satietyDown: 0.012,
+      energyDown: 0.008,
+      affDown: 0.004,
+      funDown: 0.006,           // (was 0.010) -> fun 덜 떨어지게
+      stressUpPassive: 0.0012    // (was 0.002) -> stress 덜 오르게
+    },
+
+    // item radii
+    itemRadius: {
+      BOWL: 24, BED_MAIN: 26, HUMAN_SPOT: 28, TOY_BALL: 22, TOY_WAND: 24,
+      LITTER_BOX: 28,
+      VOMIT: 18, PEE: 18, POOP: 18, DEBRIS: 18, DEAD_BODY: 20
+    },
+
+    // bowl (PATCH21 tune: 더 오래 먹을 수 있게)
+    bowl: {
+      maxFood: 1.0,
+      eatRate: 0.16,        // (was 0.14)
+      bowlDrain: 0.015,     // (was 0.10) 핵심: 너무 빨리 비는 문제 해결
+      noticeRadius: 85
+    },
+
+    // toys (PATCH21 tune: fun 상승 체감)
+    toy: {
+      wiggleMs: 600,
+      playMs: [6000, 12000],
+      cooldown: 4500,               // (was 7000)
+      playFunGainOnStart: 0.18,      // (was 0.10)
+      playFunGainDuring: 0.12        // (was 0.06)
+    },
+
+    // decision
+    decisionEvery: [1900, 2100],
+    restTime: [2400, 2200],
+
+    // arrive thresholds
+    arrive: { RAND: 30, BOWL: 28, BED: 30, HUMAN: 30, TOY: 28, PARTNER: 30, TREAT: 26, HIDE: 30 },
+
+    // relationship
+    rel: {
+      init: [0.16, 0.10],
+      parallelRadius: 150,
+      parallelRate: 0.003,
+      toyShareRadius: 140,
+      toyShareRate: 0.008,
+      slowBlinkRadius: 90,
+      slowBlinkRate: 0.03,
+      slowBlinkGateMs: 8000,
+      love: 0.78,
+      hate: 0.30
+    },
+
+    // social handshake
+    social: {
+      chance: 0.22,
+      cooldownMs: 22000,
+      checkDist: 120,
+      approachTimeoutMs: 6000,
+      doMs: [1800, 3200],
+      wrestleChance: 0.18,
+      lockMs: 6500
+    },
+
+    // memory (grudge)
+    grudgeMsMin: 120000,
+    grudgeMsMax: 180000,
+    grudgeSenseRadius: 125,
+
+    // eat loop hotfix
+    eat: { retryCdMs: [1200, 2400], crowdRadius: 70, crowdMax: 1 }, // PATCH21: 재시도 빨라짐
+
+    // drag/pet
+    god: { petAffGain: 0.40, petStressDown: 0.50 },
+
+    // sleep quality
+    sleep: {
+      floorEnergy: 0.085, floorStressUp: 0.03,
+      goodEnergy: 0.10, goodStressDown: 0.05,
+      humanBonusStressDown: 0.07
+    },
+
+    // snap/placement
+    boundsPad: 20,
+    catRadius: 14,
+    snap: { spiralSteps: 28, spiralRStep: 14, angles: 14, minCatDist: 30 },
+
+    // logs
+    logKeep: 12,
+    negKeep: 14,
+    negTopN: 3,
+    spamGateMs: 1200,
+
+    // vomit (PATCH21: 연속 구토 완화 + 기준 상향)
+    vomit: {
+      satietyThreshold: 0.97,       // (was 0.92) -> 과식 기준 완화
+      triggerChancePerSec: 0.15,    // (was 0.30) -> 연속 구토 감소
+      actionMs: [700, 1300],
+      satietyDrop: 0.55,            // 더 확 떨어뜨려서 다시 임계 넘기기 어렵게
+      stressOnVomit: 0.10,          // (was 0.12)
+      stinkRadius: 160,
+      stressPerSec: 0.007,          // (was 0.010)
+      cooldownMs: 12000             // PATCH21: 구토 쿨다운
+    },
+
+    pee: {
+      stinkRadius: 150,
+      stressPerSec: 0.0065          // (was 0.009)
+    },
+
+    poop: {
+      stinkRadius: 170,
+      stressPerSec: 0.007
+    },
+
+    debris: {
+      stinkRadius: 140,
+      stressPerSec: 0.006
+    },
+
+    // litter system (PATCH21)
+    litter: {
+      sandMax: 1.0,
+      useDrain: 0.06,
+      dirtyDrain: 0.015,      // 시간이 지나며 약간씩 더러워짐(모래 감소)
+      dirtyTickPerSec: 0.0015,
+      boxRadius: 120,         // (참고용) 거리조건은 사용 안 함(버그수습)
+      needIntervalMs: [16000, 26000],
+      peeChance: 0.62,        // 배설 이벤트에서 pee vs poop
+      accidentBaseChance: 0.10,      // 화장실 있어도 실수할 확률 (아주 낮게)
+      accidentWhenLowSand: 0.55,     // 모래 부족하면 실수↑
+    },
+
+    // stress FX (PATCH21: 과발동 완화)
+    stressFX: {
+      high: 0.94,                 // (was 0.90) -> 덜 터지게
+      severe: 0.975,
+      checkEveryMs: 3000,
+      aggroMs: [12000, 22000],
+      hideMs:  [9000, 18000],
+      lethargyMs: [10000, 20000],
+      peeChance: 0.10,
+      scratchChance: 0.14,
+      lethargyChance: 0.14
+    },
+
+    // fun low -> stress up (PATCH21 tune)
+    bored: { funLow: 0.12, stressPerSec: 0.006 }, // (was 0.010)
+
+    // death
+    death: { energyLow: 0.03, timeToDieMs: 20000 },
+
+    // gourmand shaping (PATCH21: 식탐 높은 개체 비율 낮추기)
+    gourmand: { pow: 1.55 }
+  };
+
+  // ================= ENUMS =================
+  const Mode = { OBSERVE:"OBSERVE", ITEM:"ITEM" };
+
+  const Actions = {
+    REST:"REST", WANDER:"WANDER",
+    EAT:"EAT",
+    SLEEP:"SLEEP",
+    PLAY:"PLAY",
+    SOCIAL:"SOCIAL",
+    WAIT:"WAIT",
+    FLEE:"FLEE",
+    VOMIT:"VOMIT",
+    HIDE:"HIDE"
+  };
+
+  const Sub = {
+    NONE:"", GROOM:"👅", SIT:"🪑",
+    HISS:"🙀", HOWL:"📣", CRY:"😿", LOOK:"👀",
+    BALL:"⚽", WAND:"🎣",
+    EAT:"🍗", SLEEP:"💤",
+    NOSE:"👃", ALLOGROOM:"🧼", WRESTLE:"💢",
+    BLINK:"😉",
+    WIGGLE:"🍑", PUNCH:"👊",
+    VOMIT:"🤮", PEE:"💦", POOP:"💩",
+    HIDE:"🧊",
+    AGGRO:"😾",
+    SCRATCH:"🪵",
+    DEBRIS:"🧩",
+    LITTER:"🧻",
+    DEAD:"☠️"
+  };
+
+  const ItemType = {
+    BOWL:"BOWL",
+    BED_MAIN:"BED_MAIN",
+    HUMAN_SPOT:"HUMAN_SPOT",
+    TOY_BALL:"TOY_BALL",
+    TOY_WAND:"TOY_WAND",
+    LITTER_BOX:"LITTER_BOX",
+    VOMIT:"VOMIT",
+    PEE:"PEE",
+    POOP:"POOP",
+    DEBRIS:"DEBRIS",
+    DEAD_BODY:"DEAD_BODY"
+  };
+
+  // ================= DOM =================
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  const elLog = document.getElementById('log');
+  const elNeg = document.getElementById('neg');
+  const elNegTop = document.getElementById('negTop');
+
+  const btnObserve = document.getElementById('modeObserve');
+  const btnItem = document.getElementById('modeItem');
+  const btnTreat = document.getElementById('treat');
+  const btnFeed = document.getElementById('feed');
+  const btnSand = document.getElementById('sand');
+  const btnClean = document.getElementById('clean');
+
+  const modeTag = document.getElementById('modeTag');
+  const placeTag = document.getElementById('placeTag');
+  const btnDeleteItem = document.getElementById('deleteItem');
+  const btnClearItemSel = document.getElementById('clearItemSel');
+
+  const speedSlider = document.getElementById('speed');
+  const speedTag = document.getElementById('speedTag');
+  const speedVal = document.getElementById('speedVal');
+
+  // ================= STATE =================
+  let lastT = performance.now();
+
+  let mode = Mode.OBSERVE;
+  let cats = [];
+  let items = [];
+
+  let selectedCatId = null;
+  let selectedItemId = null;
+
+  let placing = { type: null, previewX: 0, previewY: 0 };
+
+  let drag = {
+    active:false, pending:false, kind:null, id:null,
+    offsetX:0, offsetY:0,
+    startX:0, startY:0,
+    moved:false,
+    threshold: 6
+  };
+
+  let pet = { active:false, catId:null, lastX:0, lastY:0 };
+  let mouse = { x:0, y:0, down:false };
+
+  let logs = [];
+  let negs = [];
+
+  let NEXT_CAT_ID = 1;
+  let NEXT_ITEM_ID = 1;
+
+  // modes
+  let treatMode = false;
+  let feedMode = false;
+  let sandMode = false;
+  let cleanMode = false;
+
+  // treats
+  let treats = []; // {x,y,until}
+
+  // time scale
+  let timeScale = 1.0;
+
+  // ================= UTILS =================
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const lerp = (a,b,t) => a + (b-a)*t;
+  const nowStr = () => new Date().toLocaleTimeString('ko-KR',{hour12:false});
+  const d2 = (ax,ay,bx,by) => { const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; };
+  const hypot = (dx,dy) => Math.hypot(dx,dy);
+
+  function insideBounds(x,y,r=0){
+    return x >= CONFIG.boundsPad + r && x <= canvas.width - CONFIG.boundsPad - r &&
+           y >= CONFIG.boundsPad + r && y <= canvas.height - CONFIG.boundsPad - r;
+  }
+
+  function hslColorFromId(id){
+    const hue = (id * 57) % 360;
+    return `hsl(${hue}, 70%, 62%)`;
+  }
+
+  function spamGate(key, t){
+    if(!spamGate.map) spamGate.map = new Map();
+    const last = spamGate.map.get(key) || 0;
+    if(t - last < CONFIG.spamGateMs) return false;
+    spamGate.map.set(key, t);
+    return true;
+  }
+
+  function addLog(m){
+    logs.unshift(`[${nowStr()}] ${m}`);
+    logs = logs.slice(0, CONFIG.logKeep);
+    elLog.innerHTML = logs.join("<br/>");
+  }
+
+  function addNeg(m){
+    negs.unshift(`[${nowStr()}] ${m}`);
+    negs = negs.slice(0, CONFIG.negKeep);
+    elNegTop.innerHTML = (negs.slice(0, CONFIG.negTopN).map(s => "• " + s).join("<br/>")) || `<span style="opacity:.7">부정 이벤트 없음</span>`;
+    elNeg.innerHTML = negs.join("<br/>");
+  }
+
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  function randInt(a,b){ return (a + Math.random()*(b-a+1))|0; }
+
+  function cornerPoint(){
+    const pad = 65;
+    const corners = [
+      {x:pad,y:pad},{x:canvas.width-pad,y:pad},
+      {x:pad,y:canvas.height-pad},{x:canvas.width-pad,y:canvas.height-pad}
+    ];
+    return corners[randInt(0, corners.length-1)];
+  }
+
+  // ================= RELATIONSHIP =================
+  function relGet(a, bId){
+    if(a.relationships[bId] == null) a.relationships[bId] = clamp01(CONFIG.rel.init[0] + Math.random()*CONFIG.rel.init[1]);
+    return a.relationships[bId];
+  }
+  function relAdd(a, b, dv){
+    a.relationships[b.id] = clamp01(relGet(a,b.id) + dv);
+    b.relationships[a.id] = clamp01(relGet(b,a.id) + dv);
+  }
+
+  // ================= AI RESET =================
+  function softResetAI(c){
+    c.ai.sub = Sub.NONE;
+    c.ai.detail = "";
+    c.ai.target = {x:c.pos.x, y:c.pos.y};
+    c.ai.targetType = "";
+    c.ai.timer = 0;
+
+    c.ai.isStealing = false;
+    c.ai.bowlId = null;
+    c.ai.bedId = null;
+    c.ai.toyId = null;
+    c.ai.humanId = null;
+
+    c.ai.partnerId = null;
+    c.ai.approachUntil = 0;
+    c.ai.socialType = "";
+
+    c.ai.fleeFromId = null;
+    c.ai.fleeCause = "";
+  }
+
+  function releaseOccupancy(c){
+    for(const it of items){
+      if(it.type === ItemType.BED_MAIN){
+        if(it.occupants && it.occupants.includes(c.id)){
+          it.occupants = it.occupants.filter(x => x !== c.id);
+        }
+      } else {
+        if(it.occupantId === c.id) it.occupantId = null;
+      }
+    }
+  }
+
+  function hardResetAI(c, t, scope){
+    if(scope?.releaseResource) releaseOccupancy(c);
+    c.ai.lockBy = null;
+    c.ai.lockUntil = 0;
+    softResetAI(c);
+    c.vel.x = 0; c.vel.y = 0;
+    startAction(c, Actions.WANDER, t, true, { reason:"reset" });
+  }
+
+  // ================= ACTION START =================
+  function startAction(c, act, t, silent=false, opt=null){
+    if(c.dead) return;
+
+    softResetAI(c);
+    c.ai.action = act;
+
+    if(act === Actions.REST){
+      c.ai.phase = "DO";
+      c.ai.timer = t + rand(CONFIG.restTime[0], CONFIG.restTime[0] + CONFIG.restTime[1]);
+      c.ai.detail = (Math.random() < 0.5) ? "그루밍" : "앉기";
+      c.ai.sub = (c.ai.detail === "그루밍") ? Sub.GROOM : Sub.SIT;
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.WANDER){
+      c.ai.phase = "MOVE";
+      c.ai.detail = opt?.reason === "reset" ? "재정비" : "탐색";
+      c.ai.target = randPoint();
+      c.ai.targetType = "RAND";
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.WAIT){
+      c.ai.phase = "DO";
+      c.ai.timer = t + (opt?.ms ?? 1800);
+      c.ai.detail = opt?.detail ?? "기다림";
+      c.ai.sub = opt?.sub ?? Sub.CRY;
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.FLEE){
+      c.ai.phase = "MOVE";
+      c.ai.detail = "도망";
+      c.ai.fleeFromId = opt?.fromId ?? null;
+      c.ai.fleeCause = opt?.cause ?? "";
+      c.ai.targetType = "FLEE";
+      c.ai.sub = Sub.CRY;
+      c.ai.target = randPoint();
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.VOMIT){
+      c.ai.phase = "DO";
+      c.ai.detail = "구토";
+      c.ai.sub = Sub.VOMIT;
+      c.ai.timer = t + rand(CONFIG.vomit.actionMs[0], CONFIG.vomit.actionMs[1]);
+      if(!silent) addNeg(`${c.name} 🤮 : 구토...`);
+      return;
+    }
+
+    if(act === Actions.HIDE){
+      c.ai.phase = "MOVE";
+      c.ai.detail = "은둔";
+      c.ai.sub = Sub.HIDE;
+      c.ai.target = cornerPoint();
+      c.ai.targetType = "HIDE";
+      if(!silent) addNeg(`${c.name} 🧊 : 은둔(숨기)`);
+      return;
+    }
+
+    if(act === Actions.EAT){
+      const bowlPick = chooseBowlForCat(c, t);
+      if(!bowlPick){
+        c.ai.phase = "DO";
+        c.ai.timer = t + 1800;
+        c.ai.detail = "배고픔(밥그릇 없음/빈그릇)";
+        c.ai.sub = Sub.LOOK;
+        c.ai.eatCdUntil = t + rand(CONFIG.eat.retryCdMs[0], CONFIG.eat.retryCdMs[1]);
+        if(!silent && spamGate(`nobowl_${c.id}`, t)) addLog(`${c.name} 👀 : 밥그릇/사료가 필요해`);
+        return;
+      }
+      c.ai.phase = "MOVE";
+      c.ai.bowlId = bowlPick.id;
+      c.ai.isStealing = bowlPick.isSteal;
+      c.ai.detail = bowlPick.isSteal ? "뺏어먹기" : "먹으러";
+      c.ai.target = {x:bowlPick.x, y:bowlPick.y};
+      c.ai.targetType = "BOWL";
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.SLEEP){
+      const sleepSpot = chooseSleepSpot(c, t);
+      if(!sleepSpot){
+        c.ai.phase = "DO";
+        c.ai.timer = t + rand(4200, 6800);
+        c.ai.detail = "바닥잠";
+        c.ai.sub = Sub.SLEEP;
+        if(!silent) logActionStart(c);
+        return;
+      }
+      c.ai.phase = "MOVE";
+      c.ai.detail = sleepSpot.kind === "HUMAN" ? "사람 옆으로" : "잠자리로";
+      c.ai.target = {x:sleepSpot.x, y:sleepSpot.y};
+      c.ai.targetType = sleepSpot.kind;
+      if(sleepSpot.kind === "BED") c.ai.bedId = sleepSpot.id;
+      if(sleepSpot.kind === "HUMAN") c.ai.humanId = sleepSpot.id;
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.PLAY){
+      const toy = chooseToyForCat(c, t);
+      if(!toy){
+        c.ai.phase = "MOVE";
+        c.ai.detail = "혼자 놀기";
+        c.ai.sub = (Math.random()<0.5) ? Sub.BALL : Sub.WAND;
+        c.ai.target = randPoint();
+        c.ai.targetType = "RAND";
+        if(!silent) logActionStart(c);
+        return;
+      }
+      c.ai.phase = "MOVE";
+      c.ai.toyId = toy.id;
+      c.ai.detail = toy.type === ItemType.TOY_WAND ? "낚시대" : "공굴리기";
+      c.ai.sub = (toy.type === ItemType.TOY_WAND) ? Sub.WAND : Sub.BALL;
+      c.ai.target = {x:toy.x, y:toy.y};
+      c.ai.targetType = "TOY";
+      if(!silent) logActionStart(c);
+      return;
+    }
+
+    if(act === Actions.SOCIAL){
+      const partner = choosePartnerForSocial(c, t);
+      if(!partner){
+        startAction(c, Actions.WANDER, t, silent, { reason:"social_fail" });
+        return;
+      }
+      c.ai.phase = "MOVE";
+      c.ai.partnerId = partner.id;
+      c.ai.approachUntil = t + CONFIG.social.approachTimeoutMs;
+      c.ai.detail = "교감 시도";
+      c.ai.sub = Sub.NOSE;
+      c.ai.targetType = "PARTNER";
+      c.ai.target = {x:partner.pos.x, y:partner.pos.y};
+
+      partner.ai.lockBy = c.id;
+      partner.ai.lockUntil = t + CONFIG.social.lockMs;
+
+      if(!silent) logActionStart(c);
+      return;
+    }
+  }
+
+  function logActionStart(c){ addLog(`${c.name} → ${actionText(c)}`); }
+
+  function actionText(c){
+    const d = c.ai.detail ? `(${c.ai.detail})` : "";
+    const a = c.ai.action;
+    if(a === Actions.REST) return `휴식${d}`;
+    if(a === Actions.WANDER) return `산책${d}`;
+    if(a === Actions.EAT) return `식사${d}`;
+    if(a === Actions.SLEEP) return `수면${d}`;
+    if(a === Actions.PLAY) return `놀이${d}`;
+    if(a === Actions.SOCIAL) return `교감${d}`;
+    if(a === Actions.WAIT) return `대기${d}`;
+    if(a === Actions.FLEE) return `도망${d}`;
+    if(a === Actions.VOMIT) return `구토${d}`;
+    if(a === Actions.HIDE) return `은둔${d}`;
+    return `${a}${d}`;
+  }
+
+  function randPoint(){
+    return { x: 60 + Math.random()*(canvas.width-120), y: 60 + Math.random()*(canvas.height-120) };
+  }
+
+  // ================= CATS / PERSONALITY =================
+  function shaped01Pow(pow){
+    // 0~1에서 pow>1이면 큰 값(1에 가까운 값) 확률이 줄어든다
+    return Math.pow(Math.random(), pow);
+  }
+
+  function createCat(id){
+    const sociability = Math.random();
+    const sensitivity = Math.random();
+    const gourmand = shaped01Pow(CONFIG.gourmand.pow);  // PATCH21: 식탐 높은 개체 비율↓
+    const dominance = Math.random();
+
+    const c = {
+      id,
+      name: `고양이${id}`,
+      color: hslColorFromId(id),
+      pos: { x: canvas.width/2 + (Math.random()-0.5)*80, y: canvas.height/2 + (Math.random()-0.5)*80 },
+      vel: { x:0, y:0 },
+      needs: { satiety: 0.60, energy: 0.75, affection: 0.42, fun: 0.55, stress: 0.25 + Math.random()*0.12 },
+      personality: { sociability, sensitivity, gourmand, dominance },
+      relationships: {},
+      memory: { grudgeUntil: {} },
+      status: {
+        aggroUntil: 0,
+        hidingUntil: 0,
+        lethargyUntil: 0,
+        overeatingUntil: 0,
+        cystitisUntil: 0,
+        energyLowSince: 0,
+        nextStressFxAt: 0,
+        vomitCdUntil: 0,
+        nextLitterNeedAt: 0
+      },
+      dead: false,
+      removed: false, // PATCH21: 시체 오브젝트로 전환 후 고양이 본체는 숨김 처리
+      ai: {
+        action: Actions.REST,
+        phase: "REST",
+        sub: Sub.NONE,
+        detail: "",
+        target: {x:0,y:0},
+        targetType: "",
+        timer: 0,
+        nextDecision: 0,
+
+        // cooldowns
+        socialCdUntil: 0,
+        eatCdUntil: 0,
+
+        // social
+        partnerId: null,
+        lockBy: null,
+        lockUntil: 0,
+        approachUntil: 0,
+        socialType: "",
+
+        // action-specific
+        bowlId: null,
+        bedId: null,
+        humanId: null,
+        toyId: null,
+        isStealing: false,
+
+        // flee
+        fleeFromId: null,
+        fleeCause: "",
+
+        // visuals
+        floatIcon: "",
+        floatUntil: 0,
+
+        // slowblink gate
+        blinkCd: {}
+      }
+    };
+
+    // init litter need timer
+    c.status.nextLitterNeedAt = performance.now() + rand(CONFIG.litter.needIntervalMs[0], CONFIG.litter.needIntervalMs[1]);
+
+    for(const o of cats){
+      const initRel = clamp01(CONFIG.rel.init[0] + Math.random()*CONFIG.rel.init[1]);
+      c.relationships[o.id] = initRel;
+      o.relationships[c.id] = initRel;
+    }
+    return c;
+  }
+
+  function temperLabel(c){
+    const soc = c.personality.sociability;
+    const sens = c.personality.sensitivity;
+    const dom = c.personality.dominance;
+    return {
+      socType: soc < 0.35 ? "독립형" : (soc > 0.65 ? "사회형" : "중립형"),
+      sensType: sens > 0.65 ? "예민" : (sens < 0.35 ? "순한" : "보통"),
+      domType: dom > 0.68 ? "서열↑" : (dom < 0.32 ? "서열↓" : "서열~")
+    };
+  }
+
+  function isAggro(c, t){ return t < (c.status.aggroUntil||0); }
+  function isHiding(c, t){ return t < (c.status.hidingUntil||0); }
+  function isLethargic(c, t){ return t < (c.status.lethargyUntil||0); }
+
+  // ================= ITEMS =================
+  function createItem(type, x, y, deadCatId=null){
+    const id = NEXT_ITEM_ID++;
+    const it = {
+      id, type, x, y,
+      radius: CONFIG.itemRadius[type] ?? 24,
+      occupantId: null,
+      preferredOwnerId: null,
+
+      // bowl
+      food: (type === ItemType.BOWL) ? 0.75 : undefined,
+
+      // litter
+      sand: (type === ItemType.LITTER_BOX) ? 0.85 : undefined,
+
+      // bed
+      capacity: (type === ItemType.BED_MAIN) ? 2 : undefined,
+      occupants: (type === ItemType.BED_MAIN) ? [] : undefined,
+
+      // toy
+      cooldownUntil: (type === ItemType.TOY_BALL || type === ItemType.TOY_WAND) ? 0 : undefined,
+
+      // waste/debris
+      createdAt: (type === ItemType.VOMIT || type === ItemType.PEE || type === ItemType.POOP || type === ItemType.DEBRIS || type === ItemType.DEAD_BODY) ? performance.now() : undefined,
+
+      // corpse link
+      deadCatId: (type === ItemType.DEAD_BODY) ? deadCatId : null
+    };
+    return it;
+  }
+
+  function getItemsByType(type){ return items.filter(it => it.type === type); }
+
+  // ================= CHOOSERS =================
+  function chooseBowlForCat(c, t){
+    const bowls = getItemsByType(ItemType.BOWL);
+    if(bowls.length === 0) return null;
+
+    const gour = c.personality.gourmand;
+    const stealUrge = (c.needs.satiety < 0.45 ? 0.35 : 0.18) + 0.45*gour;
+    const allowSteal = Math.random() < stealUrge;
+
+    let best = null;
+    let bestScore = -1e9;
+
+    for(const b of bowls){
+      if((b.food ?? 0) < 0.05) continue;
+
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,b.x,b.y));
+      const rich = (b.food ?? 0);
+      let score = rich*2.5 - dist/220;
+
+      // crowd avoid (exclude self)
+      let crowd = 0;
+      for(const cc of cats){
+        if(cc.dead || cc.removed) continue;
+        if(cc.id === c.id) continue;
+        if(d2(cc.pos.x, cc.pos.y, b.x, b.y) < CONFIG.eat.crowdRadius*CONFIG.eat.crowdRadius) crowd++;
+      }
+      if(crowd > (CONFIG.eat.crowdMax + 1)){
+        score -= 1.6 + 0.25*crowd;
+      }
+
+      // occupied penalty
+      if(b.occupantId != null && b.occupantId !== c.id){
+        if(!allowSteal) score -= 2.0;
+        else score += 0.3;
+      }
+
+      const isSteal = (b.preferredOwnerId != null && b.preferredOwnerId !== c.id);
+      if(isSteal && allowSteal) score += 0.2 + 0.35*gour;
+      if(isSteal && !allowSteal) score -= 0.35;
+
+      if(score > bestScore){
+        bestScore = score;
+        best = { id: b.id, x:b.x, y:b.y, isSteal };
+      }
+    }
+
+    // PATCH21 FIX: fallback에서 bowls[0] 잡는 버그 제거(전부 빈그릇이면 null)
+    if(!best){
+      let nearest = null;
+      let nd = 1e18;
+      for(const b of bowls){
+        if((b.food ?? 0) < 0.05) continue;
+        const dd = d2(c.pos.x,c.pos.y,b.x,b.y);
+        if(dd < nd){ nd=dd; nearest=b; }
+      }
+      if(!nearest) return null;
+      const isSteal = (nearest.preferredOwnerId != null && nearest.preferredOwnerId !== c.id);
+      best = { id: nearest.id, x:nearest.x, y:nearest.y, isSteal };
+    }
+
+    const bowlObj = items.find(it => it.id === best.id);
+    if(bowlObj && bowlObj.preferredOwnerId == null) bowlObj.preferredOwnerId = c.id;
+
+    return best;
+  }
+
+  function chooseSleepSpot(c, t){
+    const humans = getItemsByType(ItemType.HUMAN_SPOT);
+    const beds = getItemsByType(ItemType.BED_MAIN);
+
+    let best=null, bestScore=-1e9;
+
+    for(const h of humans){
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,h.x,h.y));
+      let s = 1.3*c.personality.sociability - dist/260 - 0.2*c.needs.stress;
+      if(s > bestScore){
+        bestScore = s;
+        best = { kind:"HUMAN", id:h.id, x:h.x, y:h.y };
+      }
+    }
+
+    for(const b of beds){
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,b.x,b.y));
+      const occ = (b.occupants?.length ?? 0);
+      const free = occ < (b.capacity ?? 1);
+      let s = (free ? 1.15 : 0.55) - dist/240 - 0.1*c.needs.stress;
+      s += (c.needs.energy < 0.3 ? 0.25 : 0);
+      if(s > bestScore){
+        bestScore = s;
+        best = { kind:"BED", id:b.id, x:b.x, y:b.y };
+      }
+    }
+
+    return best;
+  }
+
+  function chooseToyForCat(c, t){
+    const toys = items.filter(it => it.type === ItemType.TOY_BALL || it.type === ItemType.TOY_WAND);
+    if(toys.length === 0) return null;
+
+    let best=null, bestScore=-1e9;
+    for(const toy of toys){
+      if(t < (toy.cooldownUntil ?? 0)) continue;
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,toy.x,toy.y));
+      const wandBonus = (toy.type === ItemType.TOY_WAND ? 0.15*c.personality.sociability : 0);
+      let s = 1.0 - dist/260 + wandBonus - 0.1*c.needs.stress;
+      if(s > bestScore){ bestScore=s; best=toy; }
+    }
+    if(!best) return null;
+    return { id: best.id, type: best.type, x: best.x, y: best.y };
+  }
+
+  function choosePartnerForSocial(c, t){
+    if(t < (c.ai.socialCdUntil || 0)) return null;
+    if(!(c.needs.affection < 0.45 || Math.random() < CONFIG.social.chance)) return null;
+
+    let best=null, bestScore=-1e9;
+
+    for(const o of cats){
+      if(o.dead || o.removed) continue;
+      if(o.id === c.id) continue;
+      if(o.ai.lockBy != null) continue;
+      if(o.ai.action === Actions.SLEEP) continue;
+      if(o.needs.stress > 0.88) continue;
+
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y));
+      if(dist > CONFIG.social.checkDist) continue;
+
+      const rel = relGet(c, o.id);
+      let s = rel*1.8 - dist/200;
+      s += 0.35*c.personality.sociability;
+      s -= 0.25*c.needs.stress;
+
+      if(isAggro(c, t)) s -= 0.18;
+
+      if(s > bestScore){ bestScore=s; best=o; }
+    }
+    return best;
+  }
+
+  // ================= SNAP / VALIDATORS =================
+  function findNearestValidSpot(x0,y0, validator, radius, ignoreId=null){
+    const { spiralSteps, spiralRStep, angles } = CONFIG.snap;
+
+    let x = Math.max(CONFIG.boundsPad+radius, Math.min(canvas.width-CONFIG.boundsPad-radius, x0));
+    let y = Math.max(CONFIG.boundsPad+radius, Math.min(canvas.height-CONFIG.boundsPad-radius, y0));
+    if(validator(x,y,radius,ignoreId)) return {x,y};
+
+    for(let step=1; step<=spiralSteps; step++){
+      const r = step * spiralRStep;
+      for(let k=0;k<angles;k++){
+        const a = (k/angles)*Math.PI*2;
+        const xx = x + Math.cos(a)*r;
+        const yy = y + Math.sin(a)*r;
+        const cx = Math.max(CONFIG.boundsPad+radius, Math.min(canvas.width-CONFIG.boundsPad-radius, xx));
+        const cy = Math.max(CONFIG.boundsPad+radius, Math.min(canvas.height-CONFIG.boundsPad-radius, yy));
+        if(validator(cx,cy,radius,ignoreId)) return {x:cx,y:cy};
+      }
+    }
+    return {x, y};
+  }
+
+  function isPointValidForItem(x,y, radius, ignoreItemId=null){
+    if(!insideBounds(x,y,radius)) return false;
+
+    for(const it of items){
+      if(ignoreItemId && it.id === ignoreItemId) continue;
+      const minD = (radius + it.radius) + 6;
+      if(d2(x,y,it.x,it.y) < minD*minD) return false;
+    }
+    for(const c of cats){
+      if(c.dead || c.removed) continue;
+      const minD = radius + CONFIG.catRadius + 10;
+      if(d2(x,y,c.pos.x,c.pos.y) < minD*minD) return false;
+    }
+    return true;
+  }
+
+  function isPointValidForCat(x,y, ignoreCatId=null){
+    if(!insideBounds(x,y, CONFIG.catRadius)) return false;
+
+    for(const o of cats){
+      if(o.dead || o.removed) continue;
+      if(ignoreCatId && o.id === ignoreCatId) continue;
+      const minD = CONFIG.snap.minCatDist;
+      if(d2(x,y,o.pos.x,o.pos.y) < minD*minD) return false;
+    }
+    for(const it of items){
+      const minD = CONFIG.catRadius + it.radius + 6;
+      if(d2(x,y,it.x,it.y) < minD*minD) return false;
+    }
+    return true;
+  }
+
+  // ================= HIT TEST =================
+  function hitCat(mx,my){
+    return cats.find(c => !c.dead && !c.removed && d2(mx,my,c.pos.x,c.pos.y) < (18*18)) || null;
+  }
+  function hitItem(mx,my){
+    for(let i=items.length-1;i>=0;i--){
+      const it = items[i];
+      if(d2(mx,my,it.x,it.y) < (Math.max(18,it.radius+4)**2)) return it;
+    }
+    return null;
+  }
+
+  // ================= DECISION / TICK =================
+  function makeDecision(c, t){
+    const { satiety, energy, fun, stress } = c.needs;
+
+    applyGrudgeInfluence(c, t);
+
+    // hiding override
+    if(isHiding(c, t)){
+      startAction(c, Actions.HIDE, t, true);
+      c.ai.nextDecision = t + 1200;
+      return;
+    }
+
+    // very stressed cats calm down first
+    if(stress > 0.90){
+      startAction(c, Actions.REST, t);
+      c.ai.nextDecision = t + CONFIG.decisionEvery[0] + Math.random()*CONFIG.decisionEvery[1];
+      return;
+    }
+
+    // survival instinct (PATCH21): 배고프거나 에너지 너무 낮으면 생존 우선
+    if (satiety < 0.22 && t > (c.ai.eatCdUntil||0)) {
+      startAction(c, Actions.EAT, t);
+      c.ai.nextDecision = t + 1000 + Math.random()*800;
+      return;
+    }
+    if (energy < 0.18) {
+      startAction(c, Actions.SLEEP, t);
+      c.ai.nextDecision = t + 1000 + Math.random()*800;
+      return;
+    }
+
+    // social attempt
+    if(satiety > 0.30 && energy > 0.26 && t > (c.ai.socialCdUntil||0) && (c.needs.affection < 0.45 || Math.random() < CONFIG.social.chance)){
+      startAction(c, Actions.SOCIAL, t);
+      c.ai.nextDecision = t + CONFIG.decisionEvery[0] + Math.random()*CONFIG.decisionEvery[1];
+      return;
+    }
+
+    // treat attract
+    if(satiety < 0.55 && treats.length){
+      const tr = nearestTreat(c, t);
+      if(tr){
+        c.ai.phase = "MOVE";
+        c.ai.action = Actions.WANDER;
+        c.ai.detail = "간식 냄새";
+        c.ai.sub = "🍪";
+        c.ai.target = {x: tr.x, y: tr.y};
+        c.ai.targetType = "TREAT";
+        c.ai.nextDecision = t + 1400;
+        return;
+      }
+    }
+
+    // PATCH21: fun 임계 올림(놀이 빈도↑)
+    if (satiety < 0.28 && t > (c.ai.eatCdUntil||0)) startAction(c, Actions.EAT, t);
+    else if (energy < 0.25) startAction(c, Actions.SLEEP, t);
+    else if (fun < 0.55) startAction(c, Actions.PLAY, t); // (was 0.40)
+    else startAction(c, Math.random()<0.62 ? Actions.REST : Actions.WANDER, t);
+
+    c.ai.nextDecision = t + CONFIG.decisionEvery[0] + Math.random()*CONFIG.decisionEvery[1];
+  }
+
+  function applyGrudgeInfluence(c, t){
+    let closest = null, bestD = 1e18;
+    for(const other of cats){
+      if(other.dead || other.removed) continue;
+      if(other.id === c.id) continue;
+      const until = c.memory.grudgeUntil[other.id] || 0;
+      if(t > until) continue;
+      const dd = d2(c.pos.x,c.pos.y,other.pos.x,other.pos.y);
+      if(dd < bestD){ bestD=dd; closest=other; }
+    }
+    if(!closest) return;
+
+    const R = CONFIG.grudgeSenseRadius;
+    if(bestD > R*R) return;
+
+    c.needs.stress = clamp01(c.needs.stress + 0.006);
+
+    const sens = c.personality.sensitivity;
+    const dom = c.personality.dominance;
+    const spicy = (sens > 0.65 && dom > 0.45) || (dom > 0.75);
+
+    if(spicy && spamGate(`grudge_warn_${c.id}_${closest.id}`, t)){
+      addNeg(`${c.name} 🙀 : ${closest.name} 원한! (선제 경고)`);
+    }
+  }
+
+  function tick(dt, t){
+    // expire treats
+    treats = treats.filter(tr => t < tr.until);
+
+    // relationship
+    relationshipTick(dt, t);
+
+    // litter dirty tick (sand slowly decreases)
+    litterTick(dt, t);
+
+    // waste aura stress
+    applyWasteAuras(dt, t);
+
+    for(const c of cats){
+      if(c.dead || c.removed) continue;
+
+      // passive needs
+      c.needs.satiety = clamp01(c.needs.satiety - CONFIG.needs.satietyDown*dt);
+      c.needs.energy = clamp01(c.needs.energy - CONFIG.needs.energyDown*dt);
+      c.needs.affection = clamp01(c.needs.affection - CONFIG.needs.affDown*dt);
+      c.needs.fun = clamp01(c.needs.fun - CONFIG.needs.funDown*dt);
+      c.needs.stress = clamp01(c.needs.stress + CONFIG.needs.stressUpPassive*dt);
+
+      // fun very low -> stress up
+      if(c.needs.fun < CONFIG.bored.funLow){
+        c.needs.stress = clamp01(c.needs.stress + CONFIG.bored.stressPerSec*dt);
+      }
+
+      // petting
+      if(pet.active && pet.catId === c.id){
+        const moved = Math.hypot(mouse.x - pet.lastX, mouse.y - pet.lastY);
+        if(moved > 1.0){
+          c.needs.affection = clamp01(c.needs.affection + CONFIG.god.petAffGain*dt);
+          c.needs.stress = clamp01(c.needs.stress - CONFIG.god.petStressDown*dt);
+          c.ai.floatIcon = "✨";
+          c.ai.floatUntil = t + 120;
+        }
+        pet.lastX = mouse.x; pet.lastY = mouse.y;
+      }
+
+      // litter needs
+      maybeLitterNeed(c, t);
+
+      // death check -> corpse conversion
+      checkDeath(c, t);
+
+      // overeating -> vomit trigger
+      maybeTriggerVomit(c, dt, t);
+
+      // stress FX (aggro/hide/pee/scratch/lethargy)
+      maybeStressFx(c, t);
+
+      // decisions
+      if(c.ai.phase !== "DO" && t > c.ai.nextDecision && !c.ai.lockBy){
+        makeDecision(c, t);
+      }
+
+      // update
+      if(c.ai.phase === "MOVE") updateMovement(c, dt, t);
+      else if(c.ai.phase === "DO") updateDo(c, dt, t);
+    }
+
+    // unlock stale locks
+    for(const c of cats){
+      if(c.dead || c.removed) continue;
+      if(c.ai.lockBy != null){
+        if(c.ai.lockUntil && t > c.ai.lockUntil){
+          c.ai.lockBy = null;
+          c.ai.lockUntil = 0;
+          continue;
+        }
+        const locker = cats.find(x => x.id === c.ai.lockBy);
+        if(!locker || locker.dead || locker.removed || locker.ai.action !== Actions.SOCIAL) c.ai.lockBy = null;
+      }
+    }
+  }
+
+  function applyWasteAuras(dt, t){
+    for(const it of items){
+      let R = 0, per = 0;
+      if(it.type === ItemType.VOMIT){ R = CONFIG.vomit.stinkRadius; per = CONFIG.vomit.stressPerSec; }
+      else if(it.type === ItemType.PEE){ R = CONFIG.pee.stinkRadius; per = CONFIG.pee.stressPerSec; }
+      else if(it.type === ItemType.POOP){ R = CONFIG.poop.stinkRadius; per = CONFIG.poop.stressPerSec; }
+      else if(it.type === ItemType.DEBRIS){ R = CONFIG.debris.stinkRadius; per = CONFIG.debris.stressPerSec; }
+      else continue;
+
+      const r2 = R*R;
+
+      for(const c of cats){
+        if(c.dead || c.removed) continue;
+        if(d2(c.pos.x,c.pos.y,it.x,it.y) < r2){
+          c.needs.stress = clamp01(c.needs.stress + per*dt);
+        }
+      }
+    }
+  }
+
+  function litterTick(dt, t){
+    const boxes = getItemsByType(ItemType.LITTER_BOX);
+    for(const b of boxes){
+      b.sand = clamp01((b.sand ?? 0) - CONFIG.litter.dirtyTickPerSec*dt);
+    }
+  }
+
+  function relationshipTick(dt, t){
+    for(let i=0;i<cats.length;i++){
+      for(let j=i+1;j<cats.length;j++){
+        const a = cats[i], b = cats[j];
+        if(a.dead || b.dead || a.removed || b.removed) continue;
+
+        const dd = d2(a.pos.x,a.pos.y,b.pos.x,b.pos.y);
+
+        if(dd < CONFIG.rel.parallelRadius*CONFIG.rel.parallelRadius){
+          relAdd(a,b, CONFIG.rel.parallelRate*dt);
+        }
+
+        if(a.ai.action === Actions.PLAY && b.ai.action === Actions.PLAY){
+          if(dd < CONFIG.rel.toyShareRadius*CONFIG.rel.toyShareRadius){
+            relAdd(a,b, CONFIG.rel.toyShareRate*dt);
+            a.needs.fun = clamp01(a.needs.fun + 0.01*dt);
+            b.needs.fun = clamp01(b.needs.fun + 0.01*dt);
+          }
+        }
+
+        if(dd < CONFIG.rel.slowBlinkRadius*CONFIG.rel.slowBlinkRadius){
+          const rel = relGet(a,b.id);
+          if(rel > CONFIG.rel.love){
+            const keyA = `b${b.id}`;
+            const keyB = `b${a.id}`;
+            const nextA = a.ai.blinkCd[keyA] || 0;
+            const nextB = b.ai.blinkCd[keyB] || 0;
+            if(t > nextA && t > nextB && Math.random() < 0.015){
+              a.ai.blinkCd[keyA] = t + CONFIG.rel.slowBlinkGateMs;
+              b.ai.blinkCd[keyB] = t + CONFIG.rel.slowBlinkGateMs;
+              a.ai.floatIcon = Sub.BLINK; a.ai.floatUntil = t + 600;
+              b.ai.floatIcon = Sub.BLINK; b.ai.floatUntil = t + 600;
+              relAdd(a,b, CONFIG.rel.slowBlinkRate);
+              a.needs.affection = clamp01(a.needs.affection + 0.015);
+              b.needs.affection = clamp01(b.needs.affection + 0.015);
+              addLog(`${a.name} 😉 ${b.name} : 눈키스`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ===== Death -> corpse conversion (PATCH21) =====
+  function checkDeath(c, t){
+    if(c.needs.energy < CONFIG.death.energyLow){
+      if(!c.status.energyLowSince) c.status.energyLowSince = t;
+      const dur = t - c.status.energyLowSince;
+      if(dur > CONFIG.death.timeToDieMs){
+        c.dead = true;
+        c.removed = true; // 화면/시뮬레이션에서 제외 (시체 오브젝트만 남김)
+        c.vel.x = 0; c.vel.y = 0;
+        releaseOccupancy(c);
+
+        // create corpse object
+        items.push(createItem(ItemType.DEAD_BODY, c.pos.x, c.pos.y, c.id));
+        addNeg(`${c.name} ☠️ : 탈진(사망) → 시체로 전환(청소 가능)`);
+      }
+    } else {
+      c.status.energyLowSince = 0;
+    }
+  }
+
+  // ===== Litter need (PATCH21) =====
+  function pickBestLitterBox(){
+    const boxes = getItemsByType(ItemType.LITTER_BOX);
+    if(!boxes.length) return null;
+    // choose max sand
+    let best = boxes[0], bestS = (best.sand ?? 0);
+    for(const b of boxes){
+      const s = (b.sand ?? 0);
+      if(s > bestS){ bestS = s; best = b; }
+    }
+    return best;
+  }
+
+  function maybeLitterNeed(c, t){
+    if(t < (c.status.nextLitterNeedAt || 0)) return;
+
+    // schedule next need first (avoid reentry spam)
+    c.status.nextLitterNeedAt = t + rand(CONFIG.litter.needIntervalMs[0], CONFIG.litter.needIntervalMs[1]);
+
+    const box = pickBestLitterBox();
+    const hasBox = !!box;
+    const sand01 = hasBox ? (box.sand ?? 0) : 0;
+
+    // PATCH21: 화장실 "거리조건" 제거(버그수습). 있으면 거기 사용 처리.
+    const boxOk = hasBox && sand01 > 0.08;
+
+    const lowSand = hasBox && sand01 <= 0.12;
+    const accidentChance = !hasBox ? 0.85 : (lowSand ? CONFIG.litter.accidentWhenLowSand : CONFIG.litter.accidentBaseChance);
+
+    const isAccident = Math.random() < accidentChance;
+    const isPee = Math.random() < CONFIG.litter.peeChance;
+
+    if(boxOk && !isAccident){
+      // Use litter box: spawn waste at box position (cleaner behavior)
+      box.sand = clamp01((box.sand ?? 0) - CONFIG.litter.useDrain);
+
+      const wType = isPee ? ItemType.PEE : ItemType.POOP;
+      items.push(createItem(wType, box.x + (Math.random()-0.5)*16, box.y + (Math.random()-0.5)*16));
+      c.ai.floatIcon = Sub.LITTER; c.ai.floatUntil = t + 650;
+      addLog(`${c.name} 🧻 : 화장실 사용 (${isPee ? "💦" : "💩"})`);
+
+      // small relief
+      c.needs.stress = clamp01(c.needs.stress - 0.03);
+      return;
+    }
+
+    // Accident near cat
+    const wType = isPee ? ItemType.PEE : ItemType.POOP;
+    items.push(createItem(wType, c.pos.x + (Math.random()-0.5)*18, c.pos.y + (Math.random()-0.5)*18));
+    c.ai.floatIcon = isPee ? Sub.PEE : Sub.POOP;
+    c.ai.floatUntil = t + 800;
+    addNeg(`${c.name} ${isPee ? "💦" : "💩"} : ${hasBox ? "실수(모래/불안)" : "화장실 없음"} `);
+
+    // stress spike
+    c.needs.stress = clamp01(c.needs.stress + 0.04);
+    c.needs.affection = clamp01(c.needs.affection - 0.03);
+  }
+
+  // ===== Vomit (PATCH21: cooldown + no chain) =====
+  function maybeTriggerVomit(c, dt, t){
+    if(c.ai.action === Actions.VOMIT) return;
+    if(t < (c.status.vomitCdUntil || 0)) return;
+    if(c.needs.satiety <= CONFIG.vomit.satietyThreshold) return;
+
+    const p = CONFIG.vomit.triggerChancePerSec;
+    if(Math.random() < p*dt){
+      startAction(c, Actions.VOMIT, t, false);
+      c.status.overeatingUntil = t + 14000;
+      c.status.vomitCdUntil = t + CONFIG.vomit.cooldownMs; // 쿨다운
+    }
+  }
+
+  // ===== Stress FX (PATCH21 tuned) =====
+  function maybeStressFx(c, t){
+    if(t < (c.status.nextStressFxAt||0)) return;
+    c.status.nextStressFxAt = t + CONFIG.stressFX.checkEveryMs;
+
+    if(c.needs.stress < CONFIG.stressFX.high) return;
+
+    const severe = c.needs.stress > CONFIG.stressFX.severe;
+
+    if(isAggro(c,t) || isHiding(c,t) || isLethargic(c,t)) return;
+
+    const r = Math.random();
+    const peeChance = CONFIG.stressFX.peeChance * (severe ? 1.4 : 1.0);
+    const lethChance = CONFIG.stressFX.lethargyChance * (severe ? 1.3 : 1.0);
+    const scratchChance = CONFIG.stressFX.scratchChance * (severe ? 1.3 : 1.0);
+
+    if(r < 0.35 + (severe ? 0.10 : 0)){
+      c.status.aggroUntil = t + rand(CONFIG.stressFX.aggroMs[0], CONFIG.stressFX.aggroMs[1]);
+      c.ai.floatIcon = Sub.AGGRO;
+      c.ai.floatUntil = t + 900;
+      addNeg(`${c.name} 😾 : 스트레스 폭주(공격성↑)`);
+      c.needs.stress = clamp01(c.needs.stress - 0.04);
+      return;
+    }
+
+    if(r < 0.62 + (severe ? 0.08 : 0)){
+      c.status.hidingUntil = t + rand(CONFIG.stressFX.hideMs[0], CONFIG.stressFX.hideMs[1]);
+      startAction(c, Actions.HIDE, t, true);
+      return;
+    }
+
+    if(r < 0.62 + peeChance){
+      const p = createItem(ItemType.PEE, c.pos.x + (Math.random()-0.5)*18, c.pos.y + (Math.random()-0.5)*18);
+      items.push(p);
+      c.ai.floatIcon = Sub.PEE; c.ai.floatUntil = t + 800;
+      addNeg(`${c.name} 💦 : 부적절 배설(스트레스 신호)`);
+      c.needs.stress = clamp01(c.needs.stress - 0.02);
+      c.needs.affection = clamp01(c.needs.affection - 0.06);
+      return;
+    }
+
+    if(r < 0.62 + peeChance + scratchChance){
+      // destructive scratching -> debris spawn
+      items.push(createItem(ItemType.DEBRIS, c.pos.x + (Math.random()-0.5)*24, c.pos.y + (Math.random()-0.5)*24));
+      c.ai.floatIcon = Sub.SCRATCH; c.ai.floatUntil = t + 800;
+      addNeg(`${c.name} 🪵 : 파괴적 스크래칭! (잔해 발생)`);
+
+      c.needs.stress = clamp01(c.needs.stress - 0.06);
+      c.needs.fun = clamp01(c.needs.fun - 0.03);
+      return;
+    }
+
+    if(r < 0.62 + peeChance + scratchChance + lethChance){
+      c.status.lethargyUntil = t + rand(CONFIG.stressFX.lethargyMs[0], CONFIG.stressFX.lethargyMs[1]);
+      addNeg(`${c.name} 🫥 : 무기력(활동 저하)`);
+      return;
+    }
+  }
+
+  function updateDo(c, dt, t){
+    if(c.dead || c.removed) return;
+
+    if(c.ai.action === Actions.VOMIT){
+      if(t > c.ai.timer){
+        const v = createItem(ItemType.VOMIT, c.pos.x + (Math.random()-0.5)*20, c.pos.y + (Math.random()-0.5)*20);
+        items.push(v);
+
+        c.needs.satiety = clamp01(c.needs.satiety - CONFIG.vomit.satietyDrop);
+        c.needs.stress = clamp01(c.needs.stress + CONFIG.vomit.stressOnVomit);
+        c.needs.affection = clamp01(c.needs.affection - 0.05);
+
+        addNeg(`${c.name} 🤮 : 토사물 발생(청소 필요)`);
+        finishAction(c, t);
+        return;
+      }
+      return;
+    }
+
+    if(c.ai.action === Actions.EAT && c.ai.bowlId != null){
+      const bowl = items.find(it => it.id === c.ai.bowlId);
+      if(!bowl || bowl.type !== ItemType.BOWL){ finishAction(c, t); return; }
+
+      bowl.occupantId = c.id;
+
+      // drain bowl food
+      bowl.food = clamp01((bowl.food ?? 0) - CONFIG.bowl.bowlDrain*dt);
+      c.needs.satiety = clamp01(c.needs.satiety + CONFIG.bowl.eatRate*dt);
+
+      handleOwnerArrives(bowl, c, t);
+
+      // PATCH21: bowl empty -> end quickly
+      if((bowl.food ?? 0) < 0.05){
+        if(bowl.occupantId === c.id) bowl.occupantId = null;
+        finishAction(c, t);
+        return;
+      }
+    }
+
+    if(c.ai.action === Actions.SLEEP){
+      if(c.ai.detail === "바닥잠"){
+        c.needs.energy = clamp01(c.needs.energy + CONFIG.sleep.floorEnergy*dt);
+        c.needs.stress = clamp01(c.needs.stress + CONFIG.sleep.floorStressUp*dt);
+      } else {
+        c.needs.energy = clamp01(c.needs.energy + CONFIG.sleep.goodEnergy*dt);
+        let down = CONFIG.sleep.goodStressDown*dt;
+        if(c.ai.targetType === "HUMAN") down = CONFIG.sleep.humanBonusStressDown*dt;
+        c.needs.stress = clamp01(c.needs.stress - down);
+      }
+    }
+
+    if(c.ai.action === Actions.PLAY){
+      c.needs.fun = clamp01(c.needs.fun + CONFIG.toy.playFunGainDuring*dt);
+      c.needs.stress = clamp01(c.needs.stress - 0.010*dt);
+    }
+
+    if(c.ai.action === Actions.SOCIAL){
+      c.needs.affection = clamp01(c.needs.affection + 0.03*dt);
+      c.needs.fun = clamp01(c.needs.fun + 0.02*dt);
+      c.needs.stress = clamp01(c.needs.stress - 0.01*dt);
+    }
+
+    if(c.ai.action === Actions.WAIT){
+      if(c.needs.satiety < 0.35) c.needs.stress = clamp01(c.needs.stress + 0.02*dt);
+    }
+
+    if(c.ai.action === Actions.HIDE){
+      c.needs.stress = clamp01(c.needs.stress - 0.010*dt);
+      c.needs.fun = clamp01(c.needs.fun - 0.004*dt);
+      c.needs.affection = clamp01(c.needs.affection - 0.004*dt);
+    }
+
+    if(t > c.ai.timer){
+      finishAction(c, t);
+    }
+  }
+
+  // ===== conflict / guarding scenarios =====
+  function setGrudge(a, b, t, mult=1.0){
+    const gDur = rand(CONFIG.grudgeMsMin, CONFIG.grudgeMsMax) * mult;
+    a.memory.grudgeUntil[b.id] = Math.max(a.memory.grudgeUntil[b.id]||0, t + gDur);
+  }
+
+  function handleOwnerArrives(bowl, eater, t){
+    const ownerId = bowl.preferredOwnerId;
+    if(ownerId == null || ownerId === eater.id) return;
+
+    const owner = cats.find(c => c.id === ownerId);
+    if(!owner || owner.dead || owner.removed) return;
+
+    const dd = d2(owner.pos.x, owner.pos.y, bowl.x, bowl.y);
+    if(dd > CONFIG.bowl.noticeRadius*CONFIG.bowl.noticeRadius) return;
+
+    const ownerWants = (owner.ai.action === Actions.EAT && owner.ai.bowlId === bowl.id) || (owner.needs.satiety < 0.45);
+    if(!ownerWants) return;
+
+    if(!spamGate(`owner_conf_${owner.id}_${eater.id}_${bowl.id}`, t)) return;
+
+    const ownerAggro = isAggro(owner, t);
+    const eaterAggro = isAggro(eater, t);
+
+    const diff = owner.personality.dominance - eater.personality.dominance;
+    const ownerSens = owner.personality.sensitivity;
+    const eaterSens = eater.personality.sensitivity;
+
+    owner.needs.stress = clamp01(owner.needs.stress + 0.06 + (ownerAggro ? 0.03 : 0));
+    eater.needs.stress = clamp01(eater.needs.stress + 0.02 + (eaterAggro ? 0.02 : 0));
+
+    const similarRank = Math.abs(diff) < 0.16;
+    const bothTouchy = (ownerSens > 0.62 && eaterSens > 0.62);
+
+    if(similarRank || bothTouchy){
+      setGrudge(owner, eater, t, 1.1);
+      setGrudge(eater, owner, t, 0.8);
+
+      addNeg(`${owner.name} 👁️ : 눈싸움(자원 수호)`);
+      const howl = Math.random() < (0.18 + 0.35*ownerSens + (ownerAggro?0.10:0));
+      const warnIcon = howl ? Sub.HOWL : Sub.HISS;
+      owner.ai.floatIcon = warnIcon; owner.ai.floatUntil = t + 800;
+      eater.ai.floatIcon = warnIcon; eater.ai.floatUntil = t + 800;
+      addNeg(`${owner.name} ${warnIcon} : 경고!`);
+
+      const basePunch = 0.35 + 0.35*ownerSens;
+      const punch = Math.random() < (basePunch + (ownerAggro?0.18:0));
+      if(punch){
+        addNeg(`${owner.name} 👊 : 냥냥펀치!`);
+        if(bowl.occupantId === eater.id) bowl.occupantId = null;
+        eater.ai.eatCdUntil = t + rand(CONFIG.eat.retryCdMs[0], CONFIG.eat.retryCdMs[1]);
+        startAction(eater, Actions.FLEE, t, true, { fromId: owner.id, cause: "냥냥펀치" });
+        addNeg(`${eater.name} 💨 : 쫓겨남(냥냥펀치)`);
+      } else {
+        if(bowl.occupantId === eater.id) bowl.occupantId = null;
+        eater.ai.eatCdUntil = t + rand(CONFIG.eat.retryCdMs[0], CONFIG.eat.retryCdMs[1]);
+        startAction(eater, Actions.FLEE, t, true, { fromId: owner.id, cause: howl ? "오징어사와" : "하악질" });
+        addNeg(`${eater.name} 💨 : 쫓겨남(${howl ? "오징어사와" : "하악질"})`);
+      }
+      return;
+    }
+
+    if(diff > 0.22){
+      setGrudge(owner, eater, t, 0.7);
+      if(eater.personality.dominance > 0.55 || eaterSens > 0.65) setGrudge(eater, owner, t, 0.6);
+
+      addNeg(`${owner.name} 😼 : 서열로 압박(순번)`);
+      const yield = Math.random() < (0.65 + 0.15*(1-eater.personality.dominance));
+      if(yield){
+        if(bowl.occupantId === eater.id) bowl.occupantId = null;
+        eater.ai.eatCdUntil = t + rand(CONFIG.eat.retryCdMs[0], CONFIG.eat.retryCdMs[1]);
+        startAction(eater, Actions.WAIT, t, true, { ms: 2000 + Math.random()*1800, detail:"멀찍이 대기", sub: Sub.CRY });
+        addNeg(`${eater.name} 😿 : 순번 대기(싸움 회피)`);
+      } else {
+        const howl = Math.random() < 0.2 + 0.25*ownerSens + (ownerAggro?0.10:0);
+        addNeg(`${owner.name} ${howl ? Sub.HOWL : Sub.HISS} : 최후통첩`);
+        if(bowl.occupantId === eater.id) bowl.occupantId = null;
+        eater.ai.eatCdUntil = t + rand(CONFIG.eat.retryCdMs[0], CONFIG.eat.retryCdMs[1]);
+        startAction(eater, Actions.FLEE, t, true, { fromId: owner.id, cause: howl ? "오징어사와" : "하악질" });
+        addNeg(`${eater.name} 💨 : 쫓겨남(${howl ? "오징어사와" : "하악질"})`);
+      }
+      return;
+    }
+
+    if(diff < -0.22){
+      setGrudge(owner, eater, t, 1.0);
+      addNeg(`${owner.name} 😾 : 상대가 강함… 회피`);
+      owner.ai.eatCdUntil = t + rand(1800, 3800);
+
+      owner.needs.stress = clamp01(owner.needs.stress + 0.08);
+      startAction(owner, Actions.WAIT, t, true, { ms: 2200 + Math.random()*2200, detail:"멀리서 지켜봄", sub: Sub.CRY });
+      addNeg(`${owner.name} 😿 : 밥 포기(스트레스↑)`);
+      return;
+    }
+  }
+
+  // ================= SOCIAL RESOLVE =================
+  function resolveSocial(c, t){
+    const p = cats.find(o => o.id === c.ai.partnerId);
+    if(!p || p.dead || p.removed){ finishAction(c, t); return; }
+
+    if(t > c.ai.approachUntil){
+      p.ai.lockBy = null;
+      p.ai.lockUntil = 0;
+      startAction(c, Actions.WANDER, t, true, { reason:"social_timeout" });
+      return;
+    }
+
+    const rel = relGet(c, p.id);
+    const pBusy = (p.ai.action === Actions.SLEEP) || (p.ai.phase === "DO" && p.ai.action === Actions.EAT);
+    const pStressed = p.needs.stress > 0.82;
+
+    const cAggro = isAggro(c, t);
+    const pAggro = isAggro(p, t);
+
+    const rejectChance =
+      (pBusy ? 0.85 : 0) +
+      (pStressed ? 0.35 : 0) +
+      (rel < 0.25 ? 0.45 : 0) +
+      (c.needs.stress > 0.85 ? 0.20 : 0) +
+      (cAggro ? 0.12 : 0) +
+      (pAggro ? 0.18 : 0);
+
+    if(Math.random() < rejectChance){
+      const pSens = p.personality.sensitivity;
+      const cDom = c.personality.dominance;
+
+      const howl = Math.random() < (0.10 + 0.35*pSens + (pAggro?0.12:0));
+      const icon = howl ? Sub.HOWL : Sub.HISS;
+
+      c.ai.phase = "DO"; c.ai.timer = t + 900; c.ai.sub = icon; c.ai.detail = "거절당함";
+      p.ai.phase = "DO"; p.ai.timer = t + 900; p.ai.sub = icon; p.ai.detail = "거절";
+      addNeg(`${p.name} ${icon} : ${c.name} 교감 거절`);
+
+      relAdd(c,p, -0.06);
+
+      if(cDom < 0.35 && Math.random() < 0.5){
+        startAction(c, Actions.FLEE, t, true, { fromId: p.id, cause: howl ? "오징어사와" : "하악질" });
+        addNeg(`${c.name} 💨 : 도망(${howl ? "오징어사와" : "하악질"})`);
+      }
+
+      c.ai.socialCdUntil = t + CONFIG.social.cooldownMs;
+      p.ai.lockBy = null;
+      p.ai.lockUntil = 0;
+      return;
+    }
+
+    const love = rel > CONFIG.rel.love;
+    const wrestle = (!love) && (Math.random() < (CONFIG.social.wrestleChance + 0.20*c.personality.sensitivity));
+    const groom = love && Math.random() < 0.6;
+
+    let type = "코부비기";
+    let icon = Sub.NOSE;
+
+    if(groom){ type="그루밍"; icon=Sub.ALLOGROOM; }
+    else if(wrestle){ type="레슬링"; icon=Sub.WRESTLE; }
+    else { type="코부비기"; icon=Sub.NOSE; }
+
+    c.ai.action = Actions.SOCIAL;
+    p.ai.action = Actions.SOCIAL;
+    c.ai.phase = "DO"; p.ai.phase = "DO";
+    c.ai.timer = t + rand(CONFIG.social.doMs[0], CONFIG.social.doMs[1]);
+    p.ai.timer = c.ai.timer;
+    c.ai.sub = icon; p.ai.sub = icon;
+    c.ai.detail = `교감(${type})`;
+    p.ai.detail = `교감(${type})`;
+
+    relAdd(c,p, groom ? 0.06 : (wrestle ? 0.03 : 0.04));
+    c.needs.fun = clamp01(c.needs.fun + (wrestle ? 0.10 : 0.05));
+    p.needs.fun = clamp01(p.needs.fun + (wrestle ? 0.10 : 0.05));
+    c.needs.affection = clamp01(c.needs.affection + 0.06);
+    p.needs.affection = clamp01(p.needs.affection + 0.06);
+
+    addLog(`${c.name} ♥ ${p.name}: 교감(${type})`);
+
+    c.ai.socialCdUntil = t + CONFIG.social.cooldownMs;
+  }
+
+  // ================= MOVEMENT =================
+  function nearestTreat(c, t){
+    let best=null, bestD=1e18;
+    for(const tr of treats){
+      const dd = d2(c.pos.x,c.pos.y,tr.x,tr.y);
+      if(dd < bestD){ bestD=dd; best=tr; }
+    }
+    return best;
+  }
+
+  function updateMovement(c, dt, t){
+    if(c.dead || c.removed) return;
+
+    if(isLethargic(c, t)){
+      dt *= 0.7;
+    }
+
+    if(c.ai.targetType === "PARTNER" && c.ai.partnerId != null){
+      const p = cats.find(o => o.id === c.ai.partnerId);
+      if(p && !p.dead && !p.removed) c.ai.target = {x:p.pos.x, y:p.pos.y};
+    }
+
+    if(c.ai.action === Actions.FLEE && c.ai.fleeFromId != null){
+      const foe = cats.find(o => o.id === c.ai.fleeFromId);
+      if(foe && !foe.dead && !foe.removed){
+        const dx = c.pos.x - foe.pos.x;
+        const dy = c.pos.y - foe.pos.y;
+        const len = hypot(dx,dy) || 1;
+        const tx = c.pos.x + (dx/len)*180 + (Math.random()-0.5)*60;
+        const ty = c.pos.y + (dy/len)*180 + (Math.random()-0.5)*60;
+        c.ai.target = {
+          x: Math.max(60, Math.min(canvas.width-60, tx)),
+          y: Math.max(60, Math.min(canvas.height-60, ty))
+        };
+      } else {
+        c.ai.fleeFromId = null;
+      }
+    }
+
+    const dx = c.ai.target.x - c.pos.x;
+    const dy = c.ai.target.y - c.pos.y;
+    const dist = hypot(dx,dy);
+
+    if(c.ai.targetType === "BOWL" && dist < CONFIG.arrive.BOWL){
+      const bowl = items.find(it => it.id === c.ai.bowlId);
+      if(!bowl){ finishAction(c, t); return; }
+      // PATCH21: 도착했는데 그릇이 비었으면 바로 끝
+      if((bowl.food ?? 0) < 0.05){
+        c.ai.eatCdUntil = t + rand(900, 1600);
+        finishAction(c, t);
+        return;
+      }
+      c.ai.phase = "DO";
+      c.ai.timer = t + 4200 + Math.random()*2200;
+      c.vel.x=0;c.vel.y=0;
+      return;
+    }
+
+    if(c.ai.targetType === "BED" && dist < CONFIG.arrive.BED){
+      const bed = items.find(it => it.id === c.ai.bedId);
+      if(!bed || bed.type !== ItemType.BED_MAIN){ finishAction(c, t); return; }
+
+      const occ = bed.occupants.length;
+      const cap = bed.capacity ?? 1;
+
+      if(occ < cap){
+        bed.occupants.push(c.id);
+        c.ai.phase = "DO";
+        c.ai.timer = t + rand(5200, 9000);
+        c.ai.detail = (occ>0 ? "공동수면" : "침대수면");
+        c.ai.sub = Sub.SLEEP;
+        c.vel.x=0;c.vel.y=0;
+        addLog(`${c.name} 💤 : ${c.ai.detail}`);
+        return;
+      }
+
+      startAction(c, Actions.SLEEP, t, true);
+      return;
+    }
+
+    if(c.ai.targetType === "HUMAN" && dist < CONFIG.arrive.HUMAN){
+      c.ai.phase = "DO";
+      c.ai.timer = t + rand(5200, 9000);
+      c.ai.detail = "사람옆 잠";
+      c.ai.sub = Sub.SLEEP;
+      c.vel.x=0;c.vel.y=0;
+      addLog(`${c.name} 🧍 : 사람옆에서 잠`);
+      return;
+    }
+
+    if(c.ai.targetType === "TOY" && dist < CONFIG.arrive.TOY){
+      const toy = items.find(it => it.id === c.ai.toyId);
+      if(!toy){ finishAction(c, t); return; }
+      if(t < (toy.cooldownUntil ?? 0)){
+        startAction(c, Actions.WANDER, t, true);
+        return;
+      }
+
+      c.ai.phase = "DO";
+      c.ai.action = Actions.PLAY;
+      c.ai.sub = Sub.WIGGLE;
+      c.ai.detail = `${c.ai.detail} 준비`;
+      c.ai.timer = t + CONFIG.toy.wiggleMs;
+
+      toy.cooldownUntil = t + CONFIG.toy.cooldown;
+      c.needs.fun = clamp01(c.needs.fun + CONFIG.toy.playFunGainOnStart);
+      addLog(`${c.name} ${toy.type===ItemType.TOY_WAND?Sub.WAND:Sub.BALL} : ${c.ai.detail}`);
+      c.vel.x=0;c.vel.y=0;
+      return;
+    }
+
+    if(c.ai.targetType === "PARTNER" && dist < CONFIG.arrive.PARTNER){
+      resolveSocial(c, t);
+      return;
+    }
+
+    if(c.ai.targetType === "TREAT" && dist < CONFIG.arrive.TREAT){
+      c.needs.satiety = clamp01(c.needs.satiety + 0.28);
+      c.needs.affection = clamp01(c.needs.affection + 0.06);
+      c.needs.stress = clamp01(c.needs.stress - 0.10);
+      addLog(`${c.name} 🍪 : 간식 냠냠`);
+
+      let idx=-1, bd=1e18;
+      for(let i=0;i<treats.length;i++){
+        const dd = d2(c.pos.x,c.pos.y,treats[i].x,treats[i].y);
+        if(dd < bd){ bd=dd; idx=i; }
+      }
+      if(idx>=0) treats.splice(idx,1);
+
+      finishAction(c, t);
+      return;
+    }
+
+    if(c.ai.targetType === "HIDE" && dist < CONFIG.arrive.HIDE){
+      c.ai.phase = "DO";
+      c.ai.action = Actions.HIDE;
+      c.ai.timer = t + 2200 + Math.random()*2000;
+      c.vel.x=0;c.vel.y=0;
+      return;
+    }
+
+    if(dist < CONFIG.arrive.RAND){
+      c.ai.phase = "DO";
+      c.ai.timer = t + 2600;
+      c.vel.x=0;c.vel.y=0;
+      return;
+    }
+
+    let vx = dx/(dist||1);
+    let vy = dy/(dist||1);
+
+    for(const o of cats){
+      if(o.dead || o.removed) continue;
+      if(o.id === c.id) continue;
+      const ddx = c.pos.x - o.pos.x;
+      const ddy = c.pos.y - o.pos.y;
+      const d = hypot(ddx,ddy);
+      if(d < 1e-6) continue;
+
+      if(d < CONFIG.move.avoidRadius){
+        vx += (ddx/d)*2; vy += (ddy/d)*2;
+      }
+
+      const until = c.memory.grudgeUntil[o.id] || 0;
+      if(t < until && d < CONFIG.move.fearRadius){
+        const spicy = (c.personality.sensitivity > 0.65 && c.personality.dominance > 0.45) || c.personality.dominance > 0.75;
+        const mult = spicy ? 1.8 : 3.8;
+        vx += (ddx/d)*mult;
+        vy += (ddy/d)*mult;
+      }
+    }
+
+    let speed = CONFIG.move.baseSpeed * (c.ai.action === Actions.FLEE ? 2.2 : 1.0);
+    if(isLethargic(c, t)) speed *= 0.75;
+
+    c.vel.x = lerp(c.vel.x, vx*speed, dt*4);
+    c.vel.y = lerp(c.vel.y, vy*speed, dt*4);
+
+    c.pos.x += c.vel.x*dt;
+    c.pos.y += c.vel.y*dt;
+
+    c.pos.x = Math.max(CONFIG.boundsPad+CONFIG.catRadius, Math.min(canvas.width-CONFIG.boundsPad-CONFIG.catRadius, c.pos.x));
+    c.pos.y = Math.max(CONFIG.boundsPad+CONFIG.catRadius, Math.min(canvas.height-CONFIG.boundsPad-CONFIG.catRadius, c.pos.y));
+  }
+
+  // ================= FINISH ACTION =================
+  function finishAction(c, t){
+    if(c.dead || c.removed) return;
+
+    if(c.ai.action === Actions.EAT && c.ai.bowlId != null){
+      const bowl = items.find(it => it.id === c.ai.bowlId);
+      if(bowl && bowl.occupantId === c.id) bowl.occupantId = null;
+    }
+    if(c.ai.action === Actions.SLEEP && c.ai.bedId != null){
+      const bed = items.find(it => it.id === c.ai.bedId);
+      if(bed && bed.type === ItemType.BED_MAIN && bed.occupants){
+        bed.occupants = bed.occupants.filter(x => x !== c.id);
+      }
+    }
+    if(c.ai.partnerId != null){
+      const p = cats.find(o => o.id === c.ai.partnerId);
+      if(p && p.ai.lockBy === c.id) { p.ai.lockBy = null; p.ai.lockUntil = 0; }
+    }
+
+    c.ai.action = Actions.REST;
+    c.ai.phase = "REST";
+    c.ai.sub = Sub.NONE;
+    c.ai.detail = "";
+    c.ai.timer = t + 400;
+
+    c.ai.bowlId = null;
+    c.ai.bedId = null;
+    c.ai.humanId = null;
+    c.ai.toyId = null;
+    c.ai.partnerId = null;
+    c.ai.approachUntil = 0;
+    c.ai.socialType = "";
+    c.ai.isStealing = false;
+
+    c.ai.fleeFromId = null;
+    c.ai.fleeCause = "";
+  }
+
+  // ================= DRAW =================
+  function itemIcon(type){
+    if(type === ItemType.BOWL) return "🍽️";
+    if(type === ItemType.BED_MAIN) return "💤";
+    if(type === ItemType.HUMAN_SPOT) return "🧍";
+    if(type === ItemType.TOY_BALL) return "⚽";
+    if(type === ItemType.TOY_WAND) return "🎣";
+    if(type === ItemType.LITTER_BOX) return "🧻";
+    if(type === ItemType.VOMIT) return "🤮";
+    if(type === ItemType.PEE) return "💦";
+    if(type === ItemType.POOP) return "💩";
+    if(type === ItemType.DEBRIS) return "🧩";
+    if(type === ItemType.DEAD_BODY) return "☠️";
+    return "❓";
+  }
+
+  function draw(t){
+    ctx.fillStyle = "#0e1116";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // items
+    for(const it of items){
+      if(it.type === ItemType.BOWL) drawBowl(it);
+      else if(it.type === ItemType.BED_MAIN) drawBed(it);
+      else if(it.type === ItemType.HUMAN_SPOT) drawHuman(it);
+      else if(it.type === ItemType.LITTER_BOX) drawLitter(it);
+      else if(it.type === ItemType.TOY_BALL || it.type === ItemType.TOY_WAND) drawToy(it, t);
+      else drawWaste(it);
+
+      if(mode === Mode.ITEM && selectedItemId === it.id){
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = "#7aa2ff";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(it.x, it.y, it.radius+8, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // treats
+    for(const tr of treats){
+      ctx.globalAlpha = 0.85;
+      ctx.font = "18px Arial";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#e6edf3";
+      ctx.fillText("🍪", tr.x, tr.y+6);
+      ctx.globalAlpha = 1;
+    }
+
+    // placing preview
+    if(mode === Mode.ITEM && placing.type){
+      const r = CONFIG.itemRadius[placing.type] ?? 24;
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = "#7aa2ff";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(placing.previewX, placing.previewY, r, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      ctx.globalAlpha = 0.6;
+      ctx.font = "20px Arial";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#e6edf3";
+      ctx.fillText(itemIcon(placing.type), placing.previewX, placing.previewY+7);
+      ctx.globalAlpha = 1;
+    }
+
+    // cats
+    for(const c of cats){
+      if(c.dead || c.removed) continue;
+
+      ctx.beginPath();
+      ctx.arc(c.pos.x, c.pos.y, CONFIG.catRadius, 0, Math.PI*2);
+
+      let fill = c.color;
+      if(c.id === selectedCatId && mode === Mode.OBSERVE) fill = "#ffd166";
+      ctx.fillStyle = fill;
+      ctx.fill();
+
+      let icon = "";
+      if(t < c.ai.floatUntil && c.ai.floatIcon) icon = c.ai.floatIcon;
+      else if(c.ai.action === Actions.EAT) icon = Sub.EAT;
+      else if(c.ai.action === Actions.SLEEP) icon = Sub.SLEEP;
+      else icon = c.ai.sub || "";
+
+      if(icon){
+        ctx.fillStyle = "white";
+        ctx.font = "16px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(icon, c.pos.x, c.pos.y - 25);
+      }
+
+      if(isAggro(c, t)){
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = "#ff6b6b";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(c.pos.x, c.pos.y, CONFIG.catRadius+6, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    if(selectedCatId && mode === Mode.OBSERVE) updateSelectedUI(t);
+    else updateSelectedPlaceholder();
+  }
+
+  function drawBowl(b){
+    const ownerId = b.preferredOwnerId;
+    if(ownerId != null){
+      const col = hslColorFromId(ownerId);
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y+10, b.radius+14, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.globalAlpha = 0.92;
+    ctx.font = "22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText("🍽️", b.x, b.y+7);
+    ctx.globalAlpha = 1;
+
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = "#24324e";
+    ctx.fillRect(b.x-18, b.y+16, 36, 4);
+    ctx.fillStyle = "#7aa2ff";
+    ctx.fillRect(b.x-18, b.y+16, 36*(b.food ?? 0), 4);
+    ctx.globalAlpha = 1;
+
+    if((b.food ?? 0) < 0.05){
+      ctx.globalAlpha = 0.7;
+      ctx.font = "10px Arial";
+      ctx.fillStyle = "#9fb1d1";
+      ctx.fillText("빈그릇", b.x, b.y+30);
+      ctx.globalAlpha = 1;
+    }
+
+    if(b.occupantId != null){
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = "#ffd166";
+      ctx.beginPath(); ctx.arc(b.x, b.y-18, 6, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+
+      if(ownerId != null && b.occupantId !== ownerId){
+        ctx.globalAlpha = 0.75;
+        ctx.strokeStyle = hslColorFromId(b.occupantId);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y+10, b.radius+14, 0, Math.PI*2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function drawLitter(b){
+    ctx.globalAlpha = 0.92;
+    ctx.font = "22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText("🧻", b.x, b.y+7);
+    ctx.globalAlpha = 1;
+
+    // sand bar
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = "#24324e";
+    ctx.fillRect(b.x-18, b.y+16, 36, 4);
+    ctx.fillStyle = "#7aa2ff";
+    ctx.fillRect(b.x-18, b.y+16, 36*(b.sand ?? 0), 4);
+    ctx.globalAlpha = 1;
+
+    if((b.sand ?? 0) < 0.10){
+      ctx.globalAlpha = 0.7;
+      ctx.font = "10px Arial";
+      ctx.fillStyle = "#9fb1d1";
+      ctx.fillText("모래부족", b.x, b.y+30);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawBed(b){
+    ctx.globalAlpha = 0.90;
+    ctx.font = "22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText("💤", b.x, b.y+7);
+    ctx.globalAlpha = 1;
+
+    const occ = b.occupants?.length ?? 0;
+    if(occ > 0){
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = "#9bffd1";
+      ctx.beginPath(); ctx.arc(b.x, b.y-18, 6+occ, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawHuman(h){
+    ctx.globalAlpha = 0.22;
+    ctx.font = "26px Arial";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText("🧍", h.x, h.y+8);
+    ctx.globalAlpha = 1;
+
+    ctx.globalAlpha = 0.12;
+    ctx.beginPath();
+    ctx.arc(h.x, h.y-6, 36, 0, Math.PI*2);
+    ctx.fillStyle = "#7aa2ff";
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawToy(it, tNow){
+    const icon = (it.type === ItemType.TOY_WAND) ? "🎣" : "⚽";
+    ctx.globalAlpha = 0.92;
+    ctx.font = "20px Arial";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText(icon, it.x, it.y+7);
+    ctx.globalAlpha = 1;
+
+    if(tNow < (it.cooldownUntil ?? 0)){
+      ctx.globalAlpha = 0.18;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y+10, it.radius+10, 0, Math.PI*2);
+      ctx.fillStyle = "#7aa2ff";
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawWaste(it){
+    const icon = itemIcon(it.type);
+
+    let auraR = 0;
+    let auraCol = "#ff6b6b";
+    if(it.type === ItemType.VOMIT) auraR = CONFIG.vomit.stinkRadius*0.35;
+    else if(it.type === ItemType.PEE) auraR = CONFIG.pee.stinkRadius*0.35;
+    else if(it.type === ItemType.POOP) auraR = CONFIG.poop.stinkRadius*0.35;
+    else if(it.type === ItemType.DEBRIS) { auraR = CONFIG.debris.stinkRadius*0.35; auraCol="#ffd166"; }
+    else if(it.type === ItemType.DEAD_BODY) { auraR = 0; }
+    else auraR = 0;
+
+    if(auraR > 0){
+      ctx.globalAlpha = 0.10;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, auraR, 0, Math.PI*2);
+      ctx.fillStyle = auraCol;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.globalAlpha = 0.95;
+    ctx.font = "20px Arial";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText(icon, it.x, it.y+7);
+    ctx.globalAlpha = 1;
+  }
+
+  function updateSelectedPlaceholder(){
+    document.getElementById('sel-info').innerHTML = `<div class="hint">관찰 모드에서 고양이를 선택하면 상태가 표시됩니다.</div>`;
+  }
+
+  function updateSelectedUI(t){
+    const c = cats.find(x => x.id === selectedCatId);
+    if(!c || c.dead || c.removed){ updateSelectedPlaceholder(); return; }
+
+    const { socType, sensType, domType } = temperLabel(c);
+
+    let grCount = 0;
+    for(const other of cats){
+      if(other.id === c.id) continue;
+      const until = c.memory.grudgeUntil[other.id] || 0;
+      if(t < until) grCount++;
+    }
+
+    const flags = [
+      (isAggro(c,t) ? "AGGRO😾" : ""),
+      (isHiding(c,t) ? "HIDE🧊" : ""),
+      (isLethargic(c,t) ? "LETH🫥" : ""),
+      (c.needs.satiety > CONFIG.vomit.satietyThreshold ? "OVERFED🍗" : "")
+    ].filter(Boolean).join(" · ");
+
+    let h = `<div class="title">${c.name} 상태 <span class="tag">${socType}/${sensType}/${domType}</span></div>`;
+    h += `<div class="hint">
+      사회성 ${Math.round(c.personality.sociability*100)}% · 예민도 ${Math.round(c.personality.sensitivity*100)}% · 식탐 ${Math.round(c.personality.gourmand*100)}% · 서열 ${Math.round(c.personality.dominance*100)}%<br/>
+      현재: <b>${actionText(c)}</b> <span class="k">phase=${c.ai.phase}</span><br/>
+      상태: <b>${flags || "정상"}</b><br/>
+      원한: <b>${grCount}</b>
+    </div>`;
+
+    ['satiety','energy','affection','fun','stress'].forEach(k => {
+      h += `<div class="hint">${k}</div><div class="bar"><div class="fill" style="width:${c.needs[k]*100}%"></div></div>`;
+    });
+
+    if(cats.length > 1){
+      h += `<div class="title" style="margin-top:12px;">관계 장부</div>`;
+      const entries = Object.entries(c.relationships).sort((a,b)=>b[1]-a[1]).slice(0, 12);
+      for(const [id, val] of entries){
+        const o = cats.find(x => x.id == id);
+        if(!o || o.dead || o.removed) continue;
+        h += `<div class="hint">${o.name}: ${Math.round(val*100)}%</div>`;
+      }
+    }
+
+    document.getElementById('sel-info').innerHTML = h;
+  }
+
+  // ================= MODE / UI =================
+  function setMode(m){
+    mode = m;
+    btnObserve.classList.toggle("on", mode === Mode.OBSERVE);
+    btnItem.classList.toggle("on", mode === Mode.ITEM);
+    modeTag.textContent = `MODE: ${mode === Mode.ITEM ? "아이템" : "관찰"}`;
+
+    if(mode === Mode.ITEM){
+      selectedCatId = null;
+      pet.active = false;
+      drag.active = false; drag.pending = false;
+      treatMode = false;
+      feedMode = false;
+      sandMode = false;
+      cleanMode = false;
+      btnTreat.classList.remove("on");
+      btnFeed.classList.remove("on");
+      btnSand.classList.remove("on");
+      btnClean.classList.remove("on");
+    } else {
+      selectedItemId = null;
+      placing.type = null;
+      updatePlaceTag();
+      updateItemButtons();
+    }
+    updateItemButtons();
+  }
+
+  function updatePlaceTag(){
+    placeTag.textContent = `선택: ${placing.type ? placing.type : "없음"}`;
+  }
+
+  function updateItemButtons(){
+    const itemMode = (mode === Mode.ITEM);
+    btnDeleteItem.disabled = !(itemMode && selectedItemId != null);
+    btnClearItemSel.disabled = !(itemMode && (selectedItemId != null || placing.type != null));
+  }
+
+  function clearObserveMiniModes(){
+    treatMode = false;
+    feedMode = false;
+    sandMode = false;
+    cleanMode = false;
+    btnTreat.classList.remove("on");
+    btnFeed.classList.remove("on");
+    btnSand.classList.remove("on");
+    btnClean.classList.remove("on");
+  }
+
+  btnObserve.onclick = () => setMode(Mode.OBSERVE);
+  btnItem.onclick = () => setMode(Mode.ITEM);
+
+  btnTreat.onclick = () => {
+    setMode(Mode.OBSERVE);
+    const next = !treatMode;
+    clearObserveMiniModes();
+    treatMode = next;
+    btnTreat.classList.toggle("on", treatMode);
+    addLog(`간식 투척 모드: ${treatMode ? "ON" : "OFF"}`);
+  };
+
+  btnFeed.onclick = () => {
+    setMode(Mode.OBSERVE);
+    const next = !feedMode;
+    clearObserveMiniModes();
+    feedMode = next;
+    btnFeed.classList.toggle("on", feedMode);
+    addLog(`사료 사용 모드: ${feedMode ? "ON" : "OFF"}`);
+  };
+
+  btnSand.onclick = () => {
+    setMode(Mode.OBSERVE);
+    const next = !sandMode;
+    clearObserveMiniModes();
+    sandMode = next;
+    btnSand.classList.toggle("on", sandMode);
+    addLog(`모래 사용 모드: ${sandMode ? "ON" : "OFF"}`);
+  };
+
+  btnClean.onclick = () => {
+    setMode(Mode.OBSERVE);
+    const next = !cleanMode;
+    clearObserveMiniModes();
+    cleanMode = next;
+    btnClean.classList.toggle("on", cleanMode);
+    addLog(`청소 모드: ${cleanMode ? "ON" : "OFF"}`);
+  };
+
+  speedSlider.oninput = () => {
+    timeScale = parseFloat(speedSlider.value);
+    speedTag.textContent = `x${timeScale.toFixed(2)}`;
+    speedVal.textContent = timeScale.toFixed(2);
+  };
+
+  document.getElementById('addCat').onclick = () => {
+    if(cats.length >= CONFIG.maxCatsGoal){
+      addLog(`고양이 최대 목표(${CONFIG.maxCatsGoal})에 도달`);
+      return;
+    }
+    const c = createCat(NEXT_CAT_ID++);
+    cats.push(c);
+    addLog(`새 가족: ${c.name}`);
+  };
+
+  document.getElementById('removeCat').onclick = () => {
+    // remove last "alive" cat if possible
+    const aliveIdx = [...cats].reverse().findIndex(c => !c.dead && !c.removed);
+    if(aliveIdx === -1) return;
+    const idx = cats.length - 1 - aliveIdx;
+    const removed = cats[idx];
+
+    if(selectedCatId === removed.id) selectedCatId = null;
+
+    for(const o of cats){
+      delete o.relationships[removed.id];
+      delete o.memory.grudgeUntil[removed.id];
+    }
+    releaseOccupancy(removed);
+
+    cats.splice(idx,1);
+    addLog(`${removed.name} 분양 완료`);
+  };
+
+  document.getElementById('reset').onclick = () => location.reload();
+
+  for(const b of document.querySelectorAll('.itemBtn')){
+    b.onclick = () => {
+      if(mode !== Mode.ITEM) setMode(Mode.ITEM);
+      placing.type = b.dataset.item;
+      selectedItemId = null;
+      updatePlaceTag();
+      updateItemButtons();
+      addLog(`배치 선택: ${placing.type}`);
+    };
+  }
+
+  btnDeleteItem.onclick = () => {
+    if(mode !== Mode.ITEM || selectedItemId == null) return;
+    const idx = items.findIndex(it => it.id === selectedItemId);
+    if(idx >= 0){
+      const it = items[idx];
+      if(it.type === ItemType.BED_MAIN && it.occupants?.length){
+        for(const cid of it.occupants){
+          const c = cats.find(x=>x.id===cid);
+          if(c) hardResetAI(c, performance.now(), { releaseResource:true });
+        }
+      }
+      it.occupantId = null;
+      items.splice(idx,1);
+      addLog(`아이템 삭제: ${it.type}#${it.id}`);
+    }
+    selectedItemId = null;
+    updateItemButtons();
+  };
+
+  btnClearItemSel.onclick = () => {
+    placing.type = null;
+    selectedItemId = null;
+    updatePlaceTag();
+    updateItemButtons();
+  };
+
+  // ================= CANVAS INPUT =================
+  canvas.addEventListener("mousemove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
+
+    if(mode === Mode.ITEM && placing.type){
+      placing.previewX = mouse.x;
+      placing.previewY = mouse.y;
+    }
+
+    if(drag.pending && !drag.active){
+      const dx = mouse.x - drag.startX;
+      const dy = mouse.y - drag.startY;
+      if(Math.hypot(dx,dy) >= drag.threshold){
+        drag.active = true;
+        drag.pending = false;
+        drag.moved = true;
+
+        if(mode === Mode.OBSERVE && drag.kind === "CAT"){
+          pet.active = true;
+          pet.catId = drag.id;
+          pet.lastX = mouse.x; pet.lastY = mouse.y;
+        }
+      }
+    }
+
+    if(drag.active){
+      if(drag.kind === "CAT"){
+        const c = cats.find(x => x.id === drag.id);
+        if(c && !c.dead && !c.removed){
+          c.pos.x = mouse.x - drag.offsetX;
+          c.pos.y = mouse.y - drag.offsetY;
+          c.vel.x = 0; c.vel.y = 0;
+        }
+      } else if(drag.kind === "ITEM"){
+        const it = items.find(x => x.id === drag.id);
+        if(it){
+          it.x = mouse.x - drag.offsetX;
+          it.y = mouse.y - drag.offsetY;
+        }
+      }
+    }
+  });
+
+  canvas.addEventListener("mousedown", (e) => {
+    mouse.down = true;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+
+    if(mode === Mode.ITEM){
+      const hit = hitItem(mx,my);
+      if(hit && !placing.type){
+        selectedItemId = hit.id;
+        drag.pending = true;
+        drag.active = false;
+        drag.kind = "ITEM";
+        drag.id = hit.id;
+        drag.startX = mx; drag.startY = my;
+        drag.offsetX = mx - hit.x;
+        drag.offsetY = my - hit.y;
+        drag.moved = false;
+        updateItemButtons();
+      } else if(!hit && !placing.type){
+        selectedItemId = null;
+        updateItemButtons();
+      }
+      return;
+    }
+
+    // OBSERVE
+    const cHit = hitCat(mx,my);
+    if(cHit){
+      selectedCatId = cHit.id;
+
+      drag.pending = true;
+      drag.active = false;
+      drag.kind = "CAT";
+      drag.id = cHit.id;
+      drag.startX = mx; drag.startY = my;
+      drag.offsetX = mx - cHit.pos.x;
+      drag.offsetY = my - cHit.pos.y;
+      drag.moved = false;
+
+      pet.active = false;
+      pet.catId = null;
+    } else {
+      selectedCatId = null;
+      pet.active = false;
+      pet.catId = null;
+    }
+  });
+
+  canvas.addEventListener("mouseup", (e) => {
+    mouse.down = false;
+    const t = performance.now();
+
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+
+    // OBSERVE click tools (no drag)
+    if(mode === Mode.OBSERVE && !drag.active && !drag.pending){
+      // clean
+      if(cleanMode){
+        const it = hitItem(mx,my);
+        if(it && (
+          it.type === ItemType.VOMIT ||
+          it.type === ItemType.PEE ||
+          it.type === ItemType.POOP ||
+          it.type === ItemType.DEBRIS ||
+          it.type === ItemType.DEAD_BODY
+        )){
+          // PATCH21: corpse cleanup removes linked cat permanently
+          if(it.type === ItemType.DEAD_BODY && it.deadCatId != null){
+            const deadId = it.deadCatId;
+            cats = cats.filter(c => c.id !== deadId);
+            // remove references
+            for(const o of cats){
+              delete o.relationships[deadId];
+              delete o.memory.grudgeUntil[deadId];
+            }
+          }
+          items = items.filter(x => x.id !== it.id);
+          addLog(`청소 완료 🧽 (${it.type}#${it.id})`);
+        } else {
+          addLog(`청소 모드: 대상 없음`);
+        }
+        cleanMode = false;
+        btnClean.classList.remove("on");
+        return;
+      }
+
+      // feed
+      if(feedMode){
+        const it = hitItem(mx,my);
+        if(it && it.type === ItemType.BOWL){
+          it.food = CONFIG.bowl.maxFood;
+          addLog(`사료 채움 🥫 (BOWL#${it.id} → 100%)`);
+        } else {
+          addLog(`사료 사용: 밥그릇을 클릭해야 함`);
+        }
+        feedMode = false;
+        btnFeed.classList.remove("on");
+        return;
+      }
+
+      // sand
+      if(sandMode){
+        const it = hitItem(mx,my);
+        if(it && it.type === ItemType.LITTER_BOX){
+          it.sand = CONFIG.litter.sandMax;
+          addLog(`모래 보충 🪣 (LITTER#${it.id} → 100%)`);
+        } else {
+          addLog(`모래 사용: 화장실을 클릭해야 함`);
+        }
+        sandMode = false;
+        btnSand.classList.remove("on");
+        return;
+      }
+
+      // treat
+      if(treatMode){
+        treats.push({ x: mx, y: my, until: t + 10000 });
+        addLog(`간식 투척 🍪 (${Math.round(mx)},${Math.round(my)})`);
+        treatMode = false;
+        btnTreat.classList.remove("on");
+        return;
+      }
+    }
+
+    // pending but not active => click only
+    if(drag.pending && !drag.active){
+      drag.pending = false;
+      drag.kind = null; drag.id = null; drag.moved = false;
+      pet.active = false; pet.catId = null;
+      return;
+    }
+
+    if(mode === Mode.ITEM){
+      // placing on click
+      if(placing.type && !drag.active){
+        const type = placing.type;
+        const rad = CONFIG.itemRadius[type] ?? 24;
+        const spot = findNearestValidSpot(mx, my, isPointValidForItem, rad, null);
+        const it = createItem(type, spot.x, spot.y);
+        items.push(it);
+        addLog(`아이템 배치: ${type}#${it.id}`);
+        selectedItemId = it.id;
+        updateItemButtons();
+      }
+
+      // finish item drag -> snap
+      if(drag.active && drag.kind === "ITEM"){
+        const it = items.find(x => x.id === drag.id);
+        if(it){
+          const spot = findNearestValidSpot(it.x, it.y, isPointValidForItem, it.radius, it.id);
+          it.x = spot.x; it.y = spot.y;
+          addLog(`아이템 이동: ${it.type}#${it.id}`);
+        }
+      }
+
+      drag.active = false; drag.pending = false; drag.kind=null; drag.id=null; drag.moved=false;
+      return;
+    }
+
+    // OBSERVE: end drag -> snap cat + hardReset
+    if(drag.active && drag.kind === "CAT"){
+      const c = cats.find(x => x.id === drag.id);
+      if(c && !c.dead && !c.removed){
+        const spot = findNearestValidSpot(c.pos.x, c.pos.y, (x,y)=>isPointValidForCat(x,y,c.id), CONFIG.catRadius, c.id);
+        c.pos.x = spot.x; c.pos.y = spot.y;
+
+        if(drag.moved){
+          addLog(`집사: ${c.name} 들어 옮김 🫳`);
+          hardResetAI(c, t, { releaseResource:true, breakSocial:true, breakChase:true });
+        }
+      }
+    }
+
+    drag.active = false; drag.pending = false; drag.kind=null; drag.id=null; drag.moved=false;
+    pet.active = false;
+    pet.catId = null;
+  });
+
+  canvas.addEventListener("click", (e) => {
+    if(drag.active || drag.pending) return;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+
+    if(mode === Mode.ITEM){
+      if(!placing.type){
+        const it = hitItem(mx,my);
+        selectedItemId = it ? it.id : null;
+        updateItemButtons();
+      }
+    } else {
+      if(treatMode || feedMode || sandMode || cleanMode) return;
+      const c = hitCat(mx,my);
+      selectedCatId = c ? c.id : null;
+    }
+  });
+
+  // ================= INIT / RESIZE =================
+  function resize(){
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+  }
+
+  function init(){
+    resize();
+    window.addEventListener('resize', resize);
+
+    cats.push(createCat(NEXT_CAT_ID++));
+    addLog(`시작: 고양이 1마리 / 아이템 0개 (밥그릇+화장실 배치 추천)`);
+
+    timeScale = parseFloat(speedSlider.value);
+    speedTag.textContent = `x${timeScale.toFixed(2)}`;
+    speedVal.textContent = timeScale.toFixed(2);
+
+    updateSelectedPlaceholder();
+    updateItemButtons();
+    updatePlaceTag();
+    setMode(Mode.OBSERVE);
+
+    requestAnimationFrame(function loop(t){
+      const dtRaw = Math.min(CONFIG.dtCap, (t-lastT)/1000);
+      lastT = t;
+
+      const dt = Math.min(CONFIG.dtCap, dtRaw * timeScale);
+
+      // toy wiggle -> play conversion
+      for(const c of cats){
+        if(c.dead || c.removed) continue;
+        if(c.ai.action === Actions.PLAY && c.ai.phase === "DO" && c.ai.sub === Sub.WIGGLE && t >= c.ai.timer){
+          c.ai.sub = (c.ai.detail.includes("낚시대") ? Sub.WAND : Sub.BALL);
+          c.ai.detail = c.ai.detail.replace(" 준비","").trim();
+          c.ai.timer = t + rand(CONFIG.toy.playMs[0], CONFIG.toy.playMs[1]);
+          addLog(`${c.name} : 놀이 시작(${c.ai.detail})`);
+        }
+      }
+
+      tick(dt, t);
+      draw(t);
+
+      requestAnimationFrame(loop);
+    });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
