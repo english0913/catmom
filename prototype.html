@@ -277,9 +277,6 @@
       peeChance: 0.62,        // 배설 이벤트에서 pee vs poop
       accidentBaseChance: 0.10,      // 화장실 있어도 실수할 확률 (아주 낮게)
       accidentWhenLowSand: 0.55,     // 모래 부족하면 실수↑
-      moveTimeoutMs: 3200,
-      maxReseek: 2,
-      useMotionMs: 2500
     },
 
     // stress FX (PATCH21: 과발동 완화)
@@ -1323,28 +1320,38 @@
     }
   }
 
-  // ===== Litter need (PATCH22) =====
-  function chooseNearestUsableLitterBox(c){
+  // ===== Litter need (PATCH21) =====
+  function pickBestLitterBoxForCat(c){
     const boxes = getItemsByType(ItemType.LITTER_BOX);
     if(!boxes.length) return null;
 
-    let best = null, bestD = 1e18;
-    for(const b of boxes){
-      if((b.sand ?? 0) <= 0.08) continue;
-      const dd = d2(c.pos.x,c.pos.y,b.x,b.y);
-      if(dd < bestD){ bestD = dd; best = b; }
+    // 범위 내 화장실만 후보로 사용 (원격 배설 방지)
+    const inRange = boxes.filter(b => d2(c.pos.x,c.pos.y,b.x,b.y) <= CONFIG.litter.useRange*CONFIG.litter.useRange);
+    if(!inRange.length) return null;
+
+    // 모래량 우선 + 거리 가중치
+    let best = inRange[0], bestS = -1e9;
+    for(const b of inRange){
+      const sand = (b.sand ?? 0);
+      const dist = Math.sqrt(d2(c.pos.x,c.pos.y,b.x,b.y));
+      const score = sand*2.0 - dist/220;
+      if(score > bestS){ bestS = score; best = b; }
     }
     return best;
   }
 
-  function completeLitterUse(c, t){
-    const box = items.find(it => it.id === c.ai.litterBoxId && it.type === ItemType.LITTER_BOX);
-    if(!box){
-      onLitterSeekFailure(c, t, "도착 후 화장실 유실");
-      return;
-    }
+  function maybeLitterNeed(c, t){
+    if(t < (c.status.nextLitterNeedAt || 0)) return;
 
-    box.sand = clamp01((box.sand ?? 0) - CONFIG.litter.useDrain);
+    // schedule next need first (avoid reentry spam)
+    c.status.nextLitterNeedAt = t + rand(CONFIG.litter.needIntervalMs[0], CONFIG.litter.needIntervalMs[1]);
+
+    const box = pickBestLitterBoxForCat(c);
+    const hasBox = !!box;
+    const sand01 = hasBox ? (box.sand ?? 0) : 0;
+
+    // 범위 내 화장실 + 최소 모래량 필요
+    const boxOk = hasBox && sand01 > 0.08;
 
     const wType = c.status.pendingWasteType || ItemType.PEE;
     const isPee = (wType === ItemType.PEE);
@@ -1352,32 +1359,15 @@
 
     if(typeof window.onCatLitterUse === "function") window.onCatLitterUse(c, box, wType);
 
-    c.ai.floatIcon = Sub.LITTER;
-    c.ai.floatUntil = t + 700;
-    addLog(`${c.name} 🧻 : 화장실 사용 완료 (${isPee ? "💦" : "💩"})`);
+    if(boxOk && !isAccident){
+      // 화장실 내 자동 분해: 오브젝트를 남기지 않음(부정 효과 없음)
+      box.sand = clamp01((box.sand ?? 0) - CONFIG.litter.useDrain);
+      c.ai.floatIcon = Sub.LITTER; c.ai.floatUntil = t + 650;
+      addLog(`${c.name} 🧻 : 화장실 사용 (${isPee ? "💦" : "💩"}, 자동 분해)`);
 
-    c.needs.stress = clamp01(c.needs.stress - 0.04);
-    c.status.pendingWasteType = null;
-    c.status.litterRetriesLeft = 0;
-    finishAction(c, t);
-  }
-
-  function onLitterSeekFailure(c, t, reason){
-    c.status.litterRetriesLeft = (c.status.litterRetriesLeft ?? 0) - 1;
-    if(c.status.litterRetriesLeft >= 0){
-      const box = chooseNearestUsableLitterBox(c);
-      if(box){
-        c.ai.phase = "MOVE";
-        c.ai.action = Actions.LITTER;
-        c.ai.detail = "화장실 재탐색";
-        c.ai.sub = Sub.LITTER;
-        c.ai.target = {x:box.x, y:box.y};
-        c.ai.targetType = "LITTER";
-        c.ai.litterBoxId = box.id;
-        c.ai.approachUntil = t + CONFIG.litter.moveTimeoutMs;
-        addLog(`${c.name} 🧻 : 화장실 재탐색 (${CONFIG.litter.maxReseek - c.status.litterRetriesLeft}/${CONFIG.litter.maxReseek})`);
-        return;
-      }
+      // 화장실 사용은 안도감 제공
+      c.needs.stress = clamp01(c.needs.stress - 0.05);
+      return;
     }
 
     addNeg(`${c.name} 🧻 실패: ${reason}`);
@@ -1527,6 +1517,11 @@
         if(c.ai.targetType === "HUMAN") down = CONFIG.sleep.humanBonusStressDown*dt;
         c.needs.stress = clamp01(c.needs.stress - down);
       }
+    }
+
+    if(c.ai.action === Actions.REST){
+      c.needs.stress = clamp01(c.needs.stress - 0.020*dt);
+      c.needs.fun = clamp01(c.needs.fun + 0.004*dt);
     }
 
     if(c.ai.action === Actions.REST){
